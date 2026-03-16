@@ -21,6 +21,7 @@ const PHASE_MODE_LABEL = {
     1: '1-phasig',
     2: '3-phasig',
 };
+const DEFAULT_CURRENT_STEPS_A = [6, 10, 12, 14, 16];
 
 class GoEGeminiAdapter extends utils.Adapter {
     constructor(options = {}) {
@@ -50,6 +51,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                 setCurrentVolatileA: 0,
                 enabledPhases: 0,
                 actualPhaseMode: 0,
+                allowedCurrentsA: [...DEFAULT_CURRENT_STEPS_A],
             },
             command: {
                 lastSentAtMs: 0,
@@ -137,12 +139,15 @@ class GoEGeminiAdapter extends utils.Adapter {
         cfg.maxGridImportW = this.clampInt(cfg.maxGridImportW, -1, -1, 100000);
         cfg.defaultSimulationMode = !!cfg.defaultSimulationMode;
 
-        cfg.minCurrentA = this.clampInt(cfg.minCurrentA, 6, 6, 32);
-        cfg.maxCurrentA = this.clampInt(cfg.maxCurrentA, 16, cfg.minCurrentA, 32);
+        cfg.minCurrentA = this.normalizeCurrentToStep(this.clampInt(cfg.minCurrentA, 6, 6, 32), 6, 32, 'up') || DEFAULT_CURRENT_STEPS_A[0];
+        cfg.maxCurrentA = this.normalizeCurrentToStep(this.clampInt(cfg.maxCurrentA, 16, cfg.minCurrentA, 32), 6, 32, 'down') || DEFAULT_CURRENT_STEPS_A[DEFAULT_CURRENT_STEPS_A.length - 1];
+        if (cfg.minCurrentA > cfg.maxCurrentA) {
+            cfg.maxCurrentA = cfg.minCurrentA;
+        }
         cfg.commandMinIntervalMs = this.clampInt(cfg.commandMinIntervalMs, 1500, 200, 30000);
 
         cfg.defaultMode = this.clampInt(cfg.defaultMode, MODE.PV_EXPORT, MODE.PV_EXPORT, MODE.GRID_MANUAL);
-        cfg.defaultGridCurrentA = this.clampInt(cfg.defaultGridCurrentA, 10, 6, 32);
+        cfg.defaultGridCurrentA = this.normalizeCurrentToStep(this.clampInt(cfg.defaultGridCurrentA, 10, 6, 32), cfg.minCurrentA, cfg.maxCurrentA, 'nearest') || cfg.minCurrentA;
         cfg.defaultGridPhaseMode = this.clampInt(cfg.defaultGridPhaseMode, 0, 0, 2);
 
         cfg.defaultTargetSocPercent = this.clampInt(cfg.defaultTargetSocPercent, 80, 1, 100);
@@ -272,6 +277,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             { id: 'status.chargerCurrentA', type: 'state', common: { name: 'Current charger current', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
             { id: 'status.setCurrentA', type: 'state', common: { name: 'Configured charger current (amp)', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
             { id: 'status.setCurrentVolatileA', type: 'state', common: { name: 'Configured volatile charger current (amx)', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
+            { id: 'status.allowedCurrentStepsA', type: 'state', common: { name: 'Allowed charging current steps [A]', role: 'text', type: 'string', read: true, write: false, def: DEFAULT_CURRENT_STEPS_A.join(',') } },
             { id: 'status.carState', type: 'state', common: { name: 'Car state', role: 'value', type: 'number', read: true, write: false, def: 0 } },
             { id: 'status.carSocPercent', type: 'state', common: { name: 'Car SoC from foreign datapoint', role: 'level', type: 'number', read: true, write: false, unit: '%', def: 0 } },
             { id: 'status.lastCommand', type: 'state', common: { name: 'Last sent command', role: 'text', type: 'string', read: true, write: false, def: '' } },
@@ -332,6 +338,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         await this.setStateAck('status.transportRead', this.config.readTransport);
         await this.setStateAck('status.transportWrite', this.config.writeTransport);
         await this.setStateAck('status.simulationModeActive', this.config.defaultSimulationMode);
+        await this.setStateAck('status.allowedCurrentStepsA', this.getAllowedCurrentSteps().join(','));
         await this.setStateAck('calculation.phaseSwitchUpThresholdW', this.config.phaseSwitchUpThresholdW);
         await this.setStateAck('calculation.phaseSwitchDownThresholdW', this.getPhaseSwitchDownThreshold());
         await this.setStateAck('calculation.maxGridImportW', this.config.maxGridImportW);
@@ -441,11 +448,26 @@ class GoEGeminiAdapter extends utils.Adapter {
             case 'control.gridManual.phaseMode':
                 return this.clampInt(value, this.config.defaultGridPhaseMode, 0, 2);
             case 'control.gridManual.currentA':
-                return this.clampInt(value, this.config.defaultGridCurrentA, 6, 32);
+                return this.normalizeCurrentToStep(
+                    this.clampInt(value, this.config.defaultGridCurrentA, 6, 32),
+                    6,
+                    32,
+                    'nearest',
+                ) ?? this.config.defaultGridCurrentA;
             case 'control.minCurrentA':
-                return this.clampInt(value, this.config.minCurrentA, 6, 32);
+                return this.normalizeCurrentToStep(
+                    this.clampInt(value, this.config.minCurrentA, 6, 32),
+                    6,
+                    32,
+                    'up',
+                ) ?? DEFAULT_CURRENT_STEPS_A[0];
             case 'control.maxCurrentA':
-                return this.clampInt(value, this.config.maxCurrentA, 6, 32);
+                return this.normalizeCurrentToStep(
+                    this.clampInt(value, this.config.maxCurrentA, 6, 32),
+                    6,
+                    32,
+                    'down',
+                ) ?? DEFAULT_CURRENT_STEPS_A[DEFAULT_CURRENT_STEPS_A.length - 1];
             case 'control.targetSocPercent':
                 return this.clampInt(value, this.config.defaultTargetSocPercent, 1, 100);
             case 'control.allowCharging':
@@ -508,6 +530,11 @@ class GoEGeminiAdapter extends utils.Adapter {
         }
         if (status.amx !== undefined) {
             charger.setCurrentVolatileA = Number(status.amx) || 0;
+        }
+        const currentSteps = this.extractCurrentStepsFromStatus(status);
+        if (currentSteps.length) {
+            charger.allowedCurrentsA = currentSteps;
+            void this.setStateAck('status.allowedCurrentStepsA', currentSteps.join(','));
         }
         if (status.pha !== undefined) {
             const pha = Number(status.pha) || 0;
@@ -608,7 +635,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         if (control.mode === MODE.GRID_MANUAL) {
             activeFormula = 'GRID: no power formula, use manual current and phase settings';
             targetPhaseMode = this.clampInt(control.gridPhaseMode, 0, 0, 2);
-            targetCurrentRawA = this.clampInt(control.gridCurrentA, minCurrentA, minCurrentA, maxCurrentA);
+            targetCurrentRawA = control.gridCurrentA;
             targetCurrentFinalA = targetCurrentRawA;
             availablePowerW = Number.NaN;
             gridImportLimitExceededW = 0;
@@ -623,6 +650,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             targetPhaseMode = this.calculateDynamicPhaseMode(availablePowerW);
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
+            targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
             decision += `pvExport available=${Math.round(availablePowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
         } else {
             activeFormula = 'PV_BATTERY_LAST: available = pvPowerW - (houseConsumptionW - chargerPowerW) + batteryChargeW - batteryDischargeW - reservePowerW';
@@ -635,6 +663,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             targetPhaseMode = this.calculateDynamicPhaseMode(availablePowerW);
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
+            targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
             decision += `pvBatteryLast available=${Math.round(availablePowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
         }
 
@@ -648,9 +677,10 @@ class GoEGeminiAdapter extends utils.Adapter {
             rawAllow = rawAllow && true;
             currentKey = 'amp';
         } else {
-            const clamped = this.clampInt(targetCurrentRawA, targetCurrentRawA, minCurrentA, maxCurrentA);
-            targetCurrentFinalA = clamped;
             if (targetCurrentRawA < minCurrentA || availablePowerW <= 0) {
+                rawAllow = false;
+            }
+            if (targetCurrentFinalA < minCurrentA) {
                 rawAllow = false;
             }
             if (freshness.stale) {
@@ -706,11 +736,29 @@ class GoEGeminiAdapter extends utils.Adapter {
         const simulationMode = !!(await this.getStateValue('control.simulationMode', this.config.defaultSimulationMode));
         const mode = this.clampInt(await this.getStateValue('control.mode', this.config.defaultMode), this.config.defaultMode, MODE.PV_EXPORT, MODE.GRID_MANUAL);
 
-        const gridCurrentA = this.clampInt(await this.getStateValue('control.gridManual.currentA', this.config.defaultGridCurrentA), this.config.defaultGridCurrentA, 6, 32);
-        const gridPhaseMode = this.clampInt(await this.getStateValue('control.gridManual.phaseMode', this.config.defaultGridPhaseMode), this.config.defaultGridPhaseMode, 0, 2);
+        let minCurrentA = this.normalizeCurrentToStep(
+            this.clampInt(await this.getStateValue('control.minCurrentA', this.config.minCurrentA), this.config.minCurrentA, 6, 32),
+            6,
+            32,
+            'up',
+        ) ?? DEFAULT_CURRENT_STEPS_A[0];
+        let maxCurrentA = this.normalizeCurrentToStep(
+            this.clampInt(await this.getStateValue('control.maxCurrentA', this.config.maxCurrentA), this.config.maxCurrentA, 6, 32),
+            6,
+            32,
+            'down',
+        ) ?? DEFAULT_CURRENT_STEPS_A[DEFAULT_CURRENT_STEPS_A.length - 1];
+        if (minCurrentA > maxCurrentA) {
+            maxCurrentA = minCurrentA;
+        }
 
-        const minCurrentA = this.clampInt(await this.getStateValue('control.minCurrentA', this.config.minCurrentA), this.config.minCurrentA, 6, 32);
-        const maxCurrentA = this.clampInt(await this.getStateValue('control.maxCurrentA', this.config.maxCurrentA), this.config.maxCurrentA, 6, 32);
+        const gridCurrentA = this.normalizeCurrentToStep(
+            this.clampInt(await this.getStateValue('control.gridManual.currentA', this.config.defaultGridCurrentA), this.config.defaultGridCurrentA, 6, 32),
+            minCurrentA,
+            maxCurrentA,
+            'nearest',
+        ) ?? minCurrentA;
+        const gridPhaseMode = this.clampInt(await this.getStateValue('control.gridManual.phaseMode', this.config.defaultGridPhaseMode), this.config.defaultGridPhaseMode, 0, 2);
 
         const targetSocEnabled = !!(await this.getStateValue('control.targetSocEnabled', this.config.defaultTargetSocEnabled));
         const targetSocPercent = this.clampInt(await this.getStateValue('control.targetSocPercent', this.config.defaultTargetSocPercent), this.config.defaultTargetSocPercent, 1, 100);
@@ -984,6 +1032,80 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     getPhaseSwitchDownThreshold() {
         return this.config.phaseSwitchUpThresholdW - this.config.phaseSwitchHysteresisW;
+    }
+
+    extractCurrentStepsFromStatus(status) {
+        const steps = [];
+        for (let idx = 1; idx <= 5; idx++) {
+            const key = `al${idx}`;
+            if (status[key] !== undefined) {
+                const value = Number.parseInt(String(status[key]), 10);
+                if (Number.isFinite(value) && value >= 6 && value <= 32) {
+                    steps.push(value);
+                }
+            }
+        }
+        return this.sanitizeCurrentSteps(steps);
+    }
+
+    sanitizeCurrentSteps(values) {
+        const unique = [...new Set((values || [])
+            .map(v => Number.parseInt(String(v), 10))
+            .filter(v => Number.isFinite(v) && v >= 6 && v <= 32))];
+        unique.sort((a, b) => a - b);
+        return unique;
+    }
+
+    getAllowedCurrentSteps() {
+        const chargerSteps = this.sanitizeCurrentSteps(this.runtime?.charger?.allowedCurrentsA || []);
+        if (chargerSteps.length) {
+            return chargerSteps;
+        }
+        return [...DEFAULT_CURRENT_STEPS_A];
+    }
+
+    normalizeCurrentToStep(targetA, minA, maxA, mode = 'nearest') {
+        const target = Number.parseInt(String(targetA), 10);
+        if (!Number.isFinite(target)) {
+            return null;
+        }
+
+        const low = Math.min(minA, maxA);
+        const high = Math.max(minA, maxA);
+        const steps = this.getAllowedCurrentSteps().filter(step => step >= low && step <= high);
+        if (!steps.length) {
+            return null;
+        }
+
+        if (mode === 'down') {
+            let selected = null;
+            for (const step of steps) {
+                if (step <= target) {
+                    selected = step;
+                }
+            }
+            return selected;
+        }
+
+        if (mode === 'up') {
+            for (const step of steps) {
+                if (step >= target) {
+                    return step;
+                }
+            }
+            return null;
+        }
+
+        let selected = steps[0];
+        let bestDiff = Math.abs(selected - target);
+        for (const step of steps) {
+            const diff = Math.abs(step - target);
+            if (diff < bestDiff || (diff === bestDiff && step < selected)) {
+                selected = step;
+                bestDiff = diff;
+            }
+        }
+        return selected;
     }
 
     async readForeignPositiveValueWithMeta(id, key) {
