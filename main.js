@@ -70,6 +70,9 @@ class GoEGeminiAdapter extends utils.Adapter {
                 startCandidateSinceMs: 0,
                 stopCandidateSinceMs: 0,
             },
+            controlMeta: {
+                currentStepSignature: '',
+            },
         };
     }
 
@@ -155,6 +158,11 @@ class GoEGeminiAdapter extends utils.Adapter {
     }
 
     async ensureObjects() {
+        const currentSteps = this.getAllowedCurrentSteps();
+        const currentStepStates = this.buildCurrentStepStateMap(currentSteps);
+        const currentMin = currentSteps[0] || 6;
+        const currentMax = currentSteps[currentSteps.length - 1] || 16;
+
         const defs = [
             { id: 'control', type: 'channel', common: { name: 'Control' } },
             { id: 'control.allowCharging', type: 'state', common: { name: 'Global allowCharging', role: 'switch.enable', type: 'boolean', read: true, write: true, def: true } },
@@ -188,8 +196,9 @@ class GoEGeminiAdapter extends utils.Adapter {
                     read: true,
                     write: true,
                     def: this.config.defaultGridCurrentA,
-                    min: 6,
-                    max: 32,
+                    min: currentMin,
+                    max: currentMax,
+                    states: currentStepStates,
                 },
             },
             {
@@ -219,8 +228,9 @@ class GoEGeminiAdapter extends utils.Adapter {
                     read: true,
                     write: true,
                     def: this.config.minCurrentA,
-                    min: 6,
-                    max: 32,
+                    min: currentMin,
+                    max: currentMax,
+                    states: currentStepStates,
                 },
             },
             {
@@ -233,8 +243,9 @@ class GoEGeminiAdapter extends utils.Adapter {
                     read: true,
                     write: true,
                     def: this.config.maxCurrentA,
-                    min: 6,
-                    max: 32,
+                    min: currentMin,
+                    max: currentMax,
+                    states: currentStepStates,
                 },
             },
             {
@@ -325,6 +336,8 @@ class GoEGeminiAdapter extends utils.Adapter {
     }
 
     async initializeControlStates() {
+        await this.updateCurrentControlStateMeta(true);
+
         await this.ensureStateDefault('control.allowCharging', true);
         await this.ensureStateDefault('control.simulationMode', this.config.defaultSimulationMode);
         await this.ensureStateDefault('control.mode', this.config.defaultMode);
@@ -535,6 +548,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         if (currentSteps.length) {
             charger.allowedCurrentsA = currentSteps;
             void this.setStateAck('status.allowedCurrentStepsA', currentSteps.join(','));
+            void this.updateCurrentControlStateMeta();
         }
         if (status.pha !== undefined) {
             const pha = Number(status.pha) || 0;
@@ -1032,6 +1046,63 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     getPhaseSwitchDownThreshold() {
         return this.config.phaseSwitchUpThresholdW - this.config.phaseSwitchHysteresisW;
+    }
+
+    buildCurrentStepStateMap(steps) {
+        const map = {};
+        for (const step of steps) {
+            map[String(step)] = `${step} A`;
+        }
+        return map;
+    }
+
+    async updateCurrentControlStateMeta(force = false) {
+        try {
+            const steps = this.getAllowedCurrentSteps();
+            if (!steps.length) {
+                return;
+            }
+
+            const signature = steps.join(',');
+            if (!force && this.runtime.controlMeta.currentStepSignature === signature) {
+                return;
+            }
+            this.runtime.controlMeta.currentStepSignature = signature;
+
+            const min = steps[0];
+            const max = steps[steps.length - 1];
+            const states = this.buildCurrentStepStateMap(steps);
+
+            const commonPatch = {
+                min,
+                max,
+                states,
+            };
+
+            await this.extendObjectAsync('control.gridManual.currentA', { common: commonPatch });
+            await this.extendObjectAsync('control.minCurrentA', { common: commonPatch });
+            await this.extendObjectAsync('control.maxCurrentA', { common: commonPatch });
+            await this.setStateAck('status.allowedCurrentStepsA', signature);
+
+            let normalizedMin = this.normalizeCurrentToStep(await this.getStateValue('control.minCurrentA', this.config.minCurrentA), min, max, 'up') ?? min;
+            let normalizedMax = this.normalizeCurrentToStep(await this.getStateValue('control.maxCurrentA', this.config.maxCurrentA), min, max, 'down') ?? max;
+            if (normalizedMin > normalizedMax) {
+                normalizedMax = normalizedMin;
+            }
+
+            const normalizedGrid = this.normalizeCurrentToStep(
+                await this.getStateValue('control.gridManual.currentA', this.config.defaultGridCurrentA),
+                normalizedMin,
+                normalizedMax,
+                'nearest',
+            ) ?? normalizedMin;
+
+            await this.setStateAck('control.minCurrentA', normalizedMin);
+            await this.setStateAck('control.maxCurrentA', normalizedMax);
+            await this.setStateAck('control.gridManual.currentA', normalizedGrid);
+        } catch (err) {
+            this.log.warn(`Current-step metadata update failed: ${err.message || err}`);
+        }
     }
 
     extractCurrentStepsFromStatus(status) {
