@@ -421,49 +421,39 @@ class GoEGeminiAdapter extends utils.Adapter {
 
         try {
             const shortId = id.replace(`${this.namespace}.`, '');
-            switch (shortId) {
-                case 'control.mode': {
-                    const mode = this.clampInt(state.val, this.config.defaultMode, MODE.PV_EXPORT, MODE.GRID_MANUAL);
-                    await this.setStateAck(shortId, mode);
-                    break;
-                }
-                case 'control.gridManual.phaseMode': {
-                    const mode = this.clampInt(state.val, this.config.defaultGridPhaseMode, 0, 2);
-                    await this.setStateAck(shortId, mode);
-                    break;
-                }
-                case 'control.gridManual.currentA': {
-                    const current = this.clampInt(state.val, this.config.defaultGridCurrentA, 6, 32);
-                    await this.setStateAck(shortId, current);
-                    break;
-                }
-                case 'control.minCurrentA': {
-                    const min = this.clampInt(state.val, this.config.minCurrentA, 6, 32);
-                    await this.setStateAck(shortId, min);
-                    break;
-                }
-                case 'control.maxCurrentA': {
-                    const max = this.clampInt(state.val, this.config.maxCurrentA, 6, 32);
-                    await this.setStateAck(shortId, max);
-                    break;
-                }
-                case 'control.targetSocPercent': {
-                    const target = this.clampInt(state.val, this.config.defaultTargetSocPercent, 1, 100);
-                    await this.setStateAck(shortId, target);
-                    break;
-                }
-                case 'control.allowCharging':
-                case 'control.simulationMode':
-                case 'control.targetSocEnabled':
-                    await this.setStateAck(shortId, !!state.val);
-                    break;
-                default:
-                    this.log.debug(`Unhandled writable state: ${shortId}`);
+            const normalized = this.normalizeControlStateValue(shortId, state.val);
+            if (normalized === undefined) {
+                this.log.debug(`Unhandled writable state: ${shortId}`);
+                return;
             }
 
             await this.evaluateAndApply(`state-change:${shortId}`);
+            await this.setStateAck(shortId, normalized);
         } catch (err) {
             this.log.error(`State change handling failed: ${err.message || err}`);
+        }
+    }
+
+    normalizeControlStateValue(shortId, value) {
+        switch (shortId) {
+            case 'control.mode':
+                return this.clampInt(value, this.config.defaultMode, MODE.PV_EXPORT, MODE.GRID_MANUAL);
+            case 'control.gridManual.phaseMode':
+                return this.clampInt(value, this.config.defaultGridPhaseMode, 0, 2);
+            case 'control.gridManual.currentA':
+                return this.clampInt(value, this.config.defaultGridCurrentA, 6, 32);
+            case 'control.minCurrentA':
+                return this.clampInt(value, this.config.minCurrentA, 6, 32);
+            case 'control.maxCurrentA':
+                return this.clampInt(value, this.config.maxCurrentA, 6, 32);
+            case 'control.targetSocPercent':
+                return this.clampInt(value, this.config.defaultTargetSocPercent, 1, 100);
+            case 'control.allowCharging':
+            case 'control.simulationMode':
+            case 'control.targetSocEnabled':
+                return !!value;
+            default:
+                return undefined;
         }
     }
 
@@ -980,6 +970,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             const msg = `Command failed ${key}=${value}: ${err.message || err}`;
             this.log.warn(msg);
             await this.setStateAck('diagnostics.lastError', msg);
+            throw err;
         }
     }
 
