@@ -1,0 +1,305 @@
+{
+  "i18n": false,
+  "type": "tabs",
+  "items": {
+    "tabConnection": {
+      "type": "panel",
+      "label": "Verbindung",
+      "items": {
+        "chargerHost": {
+          "newLine": true,
+          "type": "text",
+          "label": "Charger Host/IP",
+          "help": "IP-Adresse oder Hostname des go-e Chargers im lokalen Netz (z.B. 192.168.44.110)."
+        },
+        "pollIntervalSec": {
+          "type": "number",
+          "label": "HTTP Poll-Intervall (Sekunden)",
+          "help": "Intervall fuer Statusabfrage via HTTP. Bei MQTT-Livebetrieb kann der Wert hoeher sein.",
+          "min": 2,
+          "max": 300,
+          "step": 1
+        },
+        "httpTimeoutMs": {
+          "type": "number",
+          "label": "HTTP Timeout (ms)",
+          "help": "Abbruchzeit fuer HTTP Requests an den Charger.",
+          "min": 500,
+          "max": 20000,
+          "step": 100
+        },
+        "enableApiV2": {
+          "type": "checkbox",
+          "label": "API v2 verwenden (z.B. fuer psm/Phasenmodus)",
+          "help": "Aktivieren, wenn am Charger HTTP API v2 freigeschaltet ist."
+        },
+        "readTransport": {
+          "type": "select",
+          "label": "Lese-Transport",
+          "help": "Woher der Adapter Statusdaten liest.",
+          "options": [
+            {
+              "label": "HTTP",
+              "value": "http"
+            },
+            {
+              "label": "MQTT",
+              "value": "mqtt"
+            },
+            {
+              "label": "HTTP + MQTT",
+              "value": "hybrid"
+            }
+          ]
+        },
+        "writeTransport": {
+          "type": "select",
+          "label": "Schreib-Transport",
+          "help": "Wie Befehle an den Charger gesendet werden.",
+          "options": [
+            {
+              "label": "HTTP",
+              "value": "http"
+            },
+            {
+              "label": "MQTT",
+              "value": "mqtt"
+            }
+          ]
+        }
+      }
+    },
+    "tabMqtt": {
+      "type": "panel",
+      "label": "MQTT",
+      "items": {
+        "mqttBrokerUrl": {
+          "newLine": true,
+          "type": "text",
+          "label": "MQTT Broker URL",
+          "help": "Beispiel: mqtt://192.168.44.20:1883"
+        },
+        "mqttUsername": {
+          "type": "text",
+          "label": "MQTT Benutzername"
+        },
+        "mqttPassword": {
+          "type": "password",
+          "label": "MQTT Passwort"
+        },
+        "mqttTopicPrefix": {
+          "type": "text",
+          "label": "MQTT Topic Prefix",
+          "help": "Standard ist go-eCharger. Topic wird zu <prefix>/<serial>/status und <prefix>/<serial>/cmd/req zusammengesetzt."
+        },
+        "mqttSerial": {
+          "type": "text",
+          "label": "Seriennummer im MQTT Topic",
+          "help": "z.B. 310021"
+        }
+      }
+    },
+    "tabInputs": {
+      "type": "panel",
+      "label": "Eingangsdaten fuer Berechnung",
+      "items": {
+        "gridExportObjectId": {
+          "newLine": true,
+          "type": "text",
+          "label": "Datenpunkt Netzeinspeisung [W]",
+          "help": "Nur positive Werte verwenden. 0 wenn keine Einspeisung."
+        },
+        "gridImportObjectId": {
+          "type": "text",
+          "label": "Datenpunkt Netzbezug [W]",
+          "help": "Nur positive Werte verwenden. 0 wenn kein Bezug."
+        },
+        "pvPowerObjectId": {
+          "type": "text",
+          "label": "Datenpunkt aktuelle PV-Leistung [W]",
+          "help": "Nur positive Werte verwenden."
+        },
+        "houseConsumptionObjectId": {
+          "type": "text",
+          "label": "Datenpunkt aktueller Hausverbrauch [W]",
+          "help": "Hausverbrauch inklusive Wallbox (falls am gleichen Messpunkt)."
+        },
+        "homeBatteryChargeObjectId": {
+          "type": "text",
+          "label": "Datenpunkt Hausakku Ladelistung [W]",
+          "help": "Nur positive Werte fuer Akku-Ladung. 0 wenn nicht ladend."
+        },
+        "homeBatteryDischargeObjectId": {
+          "type": "text",
+          "label": "Datenpunkt Hausakku Entladeleistung [W]",
+          "help": "Nur positive Werte fuer Akku-Entladung. 0 wenn nicht entladend."
+        },
+        "carSocObjectId": {
+          "type": "text",
+          "label": "Datenpunkt Auto-Batterie SoC [%]",
+          "help": "Optional. Fuer Lade-Limit/Stop anhand SoC."
+        }
+      }
+    },
+    "tabControl": {
+      "type": "panel",
+      "label": "Regelung & Hysterese",
+      "items": {
+        "reservePowerW": {
+          "newLine": true,
+          "type": "number",
+          "label": "Puffer zwischen Solarpanel-Ertrag und Nutzung fuer Ladevorgang [W]",
+          "help": "Sicherheitsreserve, damit nicht ungewollt Netzbezug entsteht.",
+          "min": 0,
+          "max": 10000,
+          "step": 10
+        },
+        "phaseSwitchUpThresholdW": {
+          "type": "number",
+          "label": "Ueberschuss-Schwelle fuer Wechsel 1-phasig -> 3-phasig [W]",
+          "help": "Ab diesem verfuegbaren Ueberschuss wird ein Wechsel auf 3 Phasen erlaubt.",
+          "min": 1000,
+          "max": 20000,
+          "step": 50
+        },
+        "phaseSwitchHysteresisW": {
+          "type": "number",
+          "label": "Phasen-Hysterese [W]",
+          "help": "Rueckschaltschwelle = Oberschwelle - Hysterese. Verhindert Flattern.",
+          "min": 0,
+          "max": 10000,
+          "step": 50
+        },
+        "phaseSwitchMinHoldSec": {
+          "type": "number",
+          "label": "Minimale Haltezeit vor Phasenwechsel [s]",
+          "help": "Zeit, die der neue Zustand stabil sein muss, bevor die Phase umgeschaltet wird.",
+          "min": 0,
+          "max": 1800,
+          "step": 1
+        },
+        "startDelaySec": {
+          "type": "number",
+          "label": "Startverzoegerung Laden [s]",
+          "help": "Verhindert kurzes Starten bei kurzen Leistungsspitzen.",
+          "min": 0,
+          "max": 1800,
+          "step": 1
+        },
+        "stopDelaySec": {
+          "type": "number",
+          "label": "Stopverzoegerung Laden [s]",
+          "help": "Verhindert haeufiges Stoppen bei kurzen Einbruechen.",
+          "min": 0,
+          "max": 1800,
+          "step": 1
+        },
+        "maxInputAgeSec": {
+          "type": "number",
+          "label": "Maximales Alter externer Datenpunkte [s]",
+          "help": "Wenn benoetigte Eingangsdaten aelter als dieser Wert sind, wird in PV-Modi aus Sicherheitsgruenden nicht geladen.",
+          "min": 1,
+          "max": 3600,
+          "step": 1
+        },
+        "maxGridImportW": {
+          "type": "number",
+          "label": "Maximal erlaubter Netzbezug [W] (-1 = deaktiviert)",
+          "help": "Begrenzt den zulaessigen Netzbezug in PV-Modi. Bei Ueberschreitung wird die verfuegbare Ladeleistung reduziert.",
+          "min": -1,
+          "max": 20000,
+          "step": 50
+        },
+        "minCurrentA": {
+          "type": "number",
+          "label": "Minimaler Ladestrom [A]",
+          "help": "Typisch 6A.",
+          "min": 6,
+          "max": 32,
+          "step": 1
+        },
+        "maxCurrentA": {
+          "type": "number",
+          "label": "Maximaler Ladestrom [A]",
+          "help": "Wird in allen Modi als Obergrenze verwendet.",
+          "min": 6,
+          "max": 32,
+          "step": 1
+        },
+        "commandMinIntervalMs": {
+          "type": "number",
+          "label": "Mindestabstand zwischen Befehlen [ms]",
+          "help": "Schutz gegen zu haeufige Schreibvorgaenge.",
+          "min": 200,
+          "max": 20000,
+          "step": 100
+        }
+      }
+    },
+    "tabDefaults": {
+      "type": "panel",
+      "label": "Startwerte",
+      "items": {
+        "defaultMode": {
+          "newLine": true,
+          "type": "select",
+          "label": "Standardmodus beim Adapterstart",
+          "options": [
+            {
+              "label": "PV only",
+              "value": 1
+            },
+            {
+              "label": "PV only (go-e = priority)",
+              "value": 2
+            },
+            {
+              "label": "grid mode",
+              "value": 3
+            }
+          ]
+        },
+        "defaultGridCurrentA": {
+          "type": "number",
+          "label": "Standard Strom im Netz-Modus [A]",
+          "min": 6,
+          "max": 32,
+          "step": 1
+        },
+        "defaultGridPhaseMode": {
+          "type": "select",
+          "label": "Standard Phasenmodus im Netz-Modus",
+          "options": [
+            {
+              "label": "Automatik",
+              "value": 0
+            },
+            {
+              "label": "1-phasig",
+              "value": 1
+            },
+            {
+              "label": "3-phasig",
+              "value": 2
+            }
+          ]
+        },
+        "defaultTargetSocEnabled": {
+          "type": "checkbox",
+          "label": "SoC-Limit standardmaessig aktiv"
+        },
+        "defaultTargetSocPercent": {
+          "type": "number",
+          "label": "SoC-Limit Standard [%]",
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        "defaultSimulationMode": {
+          "type": "checkbox",
+          "label": "Simulation beim Start aktiv (Dry-Run, keine Schreibbefehle)"
+        }
+      }
+    }
+  }
+}

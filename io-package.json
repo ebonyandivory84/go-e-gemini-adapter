@@ -1,0 +1,106 @@
+{
+  "common": {
+    "name": "go-e-gemini-adapter",
+    "version": "0.1.0",
+    "news": {
+      "0.1.0": {
+        "en": "Initial custom adapter with PV/Grid modes, HTTP+MQTT support and explicit object model",
+        "de": "Initiale Version mit PV-/Netz-Modi, HTTP+MQTT-Unterstützung und explizitem Objektmodell"
+      }
+    },
+    "titleLang": {
+      "en": "go-e Gemini Adapter",
+      "de": "go-e Gemini Adapter"
+    },
+    "desc": {
+      "en": "Custom go-e Gemini adapter with deterministic charging modes",
+      "de": "Eigener go-e Gemini Adapter mit deterministischen Lademodi"
+    },
+    "authors": [
+      "Sebastian"
+    ],
+    "keywords": [
+      "go-e",
+      "gemini",
+      "wallbox",
+      "pv",
+      "adapter"
+    ],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "",
+    "enabled": false,
+    "extIcon": "",
+    "readme": "https://github.com/ebonyandivory84/go-e-gemini-adapter",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "vehicle",
+    "compact": true,
+    "connectionType": "local",
+    "dataSource": "poll",
+    "materialize": true,
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=5.0.19"
+      }
+    ],
+    "tier": 3
+  },
+  "native": {
+    "chargerHost": "192.168.44.110",
+    "pollIntervalSec": 10,
+    "httpTimeoutMs": 3000,
+    "readTransport": "http",
+    "writeTransport": "http",
+    "enableApiV2": true,
+    "mqttBrokerUrl": "",
+    "mqttUsername": "",
+    "mqttPassword": "",
+    "mqttTopicPrefix": "go-eCharger",
+    "mqttSerial": "310021",
+    "gridExportObjectId": "",
+    "gridImportObjectId": "",
+    "pvPowerObjectId": "",
+    "houseConsumptionObjectId": "",
+    "homeBatteryChargeObjectId": "",
+    "homeBatteryDischargeObjectId": "",
+    "carSocObjectId": "",
+    "reservePowerW": 300,
+    "phaseSwitchUpThresholdW": 4200,
+    "phaseSwitchHysteresisW": 700,
+    "phaseSwitchMinHoldSec": 120,
+    "startDelaySec": 20,
+    "stopDelaySec": 120,
+    "maxInputAgeSec": 30,
+    "maxGridImportW": -1,
+    "minCurrentA": 6,
+    "maxCurrentA": 16,
+    "commandMinIntervalMs": 1500,
+    "defaultMode": 1,
+    "defaultGridCurrentA": 10,
+    "defaultGridPhaseMode": 0,
+    "defaultTargetSocPercent": 80,
+    "defaultTargetSocEnabled": false,
+    "defaultSimulationMode": false
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "role": "indicator.connected",
+        "name": "Connection to charger",
+        "type": "boolean",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
+}
