@@ -105,37 +105,37 @@
       "items": {
         "gridExportObjectId": {
           "newLine": true,
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt Netzeinspeisung [W]",
           "help": "Nur positive Werte verwenden. 0 wenn keine Einspeisung."
         },
         "gridImportObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt Netzbezug [W]",
           "help": "Nur positive Werte verwenden. 0 wenn kein Bezug."
         },
         "pvPowerObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt aktuelle PV-Leistung [W]",
           "help": "Nur positive Werte verwenden."
         },
         "houseConsumptionObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt aktueller Hausverbrauch [W]",
           "help": "Hausverbrauch inklusive Wallbox (falls am gleichen Messpunkt)."
         },
         "homeBatteryChargeObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt Hausakku Ladelistung [W]",
           "help": "Nur positive Werte fuer Akku-Ladung. 0 wenn nicht ladend."
         },
         "homeBatteryDischargeObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt Hausakku Entladeleistung [W]",
           "help": "Nur positive Werte fuer Akku-Entladung. 0 wenn nicht entladend."
         },
         "carSocObjectId": {
-          "type": "text",
+          "type": "objectId",
           "label": "Datenpunkt Auto-Batterie SoC [%]",
           "help": "Optional. Fuer Lade-Limit/Stop anhand SoC."
         }
