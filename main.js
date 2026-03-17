@@ -109,7 +109,17 @@ class GoEGeminiAdapter extends utils.Adapter {
                 await this.readStatusHttp();
             }
 
-            await this.enqueueEvaluation('startup');
+            try {
+                await this.enqueueEvaluation('startup');
+            } catch (err) {
+                const msg = `Startup evaluation failed: ${err.message || err}`;
+                await this.setStateAck('diagnostics.lastError', msg);
+                if (this.isTransientNetworkError(err)) {
+                    this.log.warn(msg);
+                } else {
+                    this.log.error(msg);
+                }
+            }
 
             this.pollTimer = this.setInterval(async () => {
                 try {
@@ -118,7 +128,11 @@ class GoEGeminiAdapter extends utils.Adapter {
                     }
                     await this.enqueueEvaluation('poll');
                 } catch (err) {
-                    this.log.error(`Polling/evaluation error: ${err.message || err}`);
+                    if (this.isTransientNetworkError(err)) {
+                        this.log.warn(`Polling/evaluation transient network failure: ${err.message || err}`);
+                    } else {
+                        this.log.error(`Polling/evaluation error: ${err.message || err}`);
+                    }
                 }
             }, this.config.pollIntervalSec * 1000);
         } catch (err) {
