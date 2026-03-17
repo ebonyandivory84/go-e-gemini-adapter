@@ -75,6 +75,8 @@ class GoEGeminiAdapter extends utils.Adapter {
                 currentStepSignature: '',
             },
             evaluationQueue: Promise.resolve(),
+            httpQueue: Promise.resolve(),
+            httpTransientCooldownUntilMs: 0,
             session: {
                 active: false,
                 energyWh: 0,
@@ -465,7 +467,11 @@ class GoEGeminiAdapter extends utils.Adapter {
             await this.enqueueEvaluation(`state-change:${shortId}`);
             await this.setStateAck(shortId, normalized);
         } catch (err) {
-            this.log.error(`State change handling failed: ${err.message || err}`);
+            if (this.isTransientNetworkError(err)) {
+                this.log.warn(`State change handling transient network failure: ${err.message || err}`);
+            } else {
+                this.log.error(`State change handling failed: ${err.message || err}`);
+            }
         }
     }
 
@@ -477,28 +483,48 @@ class GoEGeminiAdapter extends utils.Adapter {
         return run;
     }
 
+    enqueueHttpRequest(task, context = 'HTTP request') {
+        const run = this.runtime.httpQueue
+            .catch(() => undefined)
+            .then(async () => {
+                const waitMs = this.runtime.httpTransientCooldownUntilMs - Date.now();
+                if (waitMs > 0) {
+                    this.log.debug(`${context} waiting for transient cooldown: ${waitMs}ms`);
+                    await this.delay(waitMs);
+                }
+                return task();
+            });
+        this.runtime.httpQueue = run;
+        return run;
+    }
+
     isTransientNetworkError(err) {
         const code = String(err?.code || err?.cause?.code || '').toUpperCase();
         return ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED'].includes(code);
     }
 
     async httpGetWithRetry(path, options = {}, context = 'HTTP request') {
-        const attempts = 3;
-        let lastError = null;
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-            try {
-                return await this.http.get(path, options);
-            } catch (err) {
-                lastError = err;
-                if (!this.isTransientNetworkError(err) || attempt === attempts) {
-                    throw err;
+        return this.enqueueHttpRequest(async () => {
+            const attempts = 3;
+            let lastError = null;
+            for (let attempt = 1; attempt <= attempts; attempt++) {
+                try {
+                    return await this.http.get(path, options);
+                } catch (err) {
+                    lastError = err;
+                    if (!this.isTransientNetworkError(err) || attempt === attempts) {
+                        if (this.isTransientNetworkError(err)) {
+                            this.runtime.httpTransientCooldownUntilMs = Date.now() + 2500;
+                        }
+                        throw err;
+                    }
+                    const waitMs = 200 * attempt;
+                    this.log.debug(`${context} transient failure (attempt ${attempt}/${attempts}): ${err.message || err}; retry in ${waitMs}ms`);
+                    await this.delay(waitMs);
                 }
-                const waitMs = 200 * attempt;
-                this.log.debug(`${context} transient failure (attempt ${attempt}/${attempts}): ${err.message || err}; retry in ${waitMs}ms`);
-                await this.delay(waitMs);
             }
-        }
-        throw lastError || new Error(`${context} failed`);
+            throw lastError || new Error(`${context} failed`);
+        }, context);
     }
 
     normalizeControlStateValue(shortId, value) {
@@ -1123,6 +1149,11 @@ class GoEGeminiAdapter extends utils.Adapter {
             const msg = `Command failed ${key}=${value}: ${err.message || err}`;
             this.log.warn(msg);
             await this.setStateAck('diagnostics.lastError', msg);
+            if (this.isTransientNetworkError(err)) {
+                this.runtime.charger.connected = false;
+                await this.setStateAck('info.connection', false);
+                await this.setStateAck('status.connection', false);
+            }
             throw err;
         }
     }
