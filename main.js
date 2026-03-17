@@ -75,6 +75,12 @@ class GoEGeminiAdapter extends utils.Adapter {
                 currentStepSignature: '',
             },
             evaluationQueue: Promise.resolve(),
+            session: {
+                active: false,
+                energyWh: 0,
+                lastSampleTsMs: 0,
+                lastPowerW: 0,
+            },
         };
     }
 
@@ -289,6 +295,9 @@ class GoEGeminiAdapter extends utils.Adapter {
             { id: 'status.enabledPhases', type: 'state', common: { name: 'Enabled phases', role: 'value', type: 'number', read: true, write: false, unit: 'phase', def: 0 } },
             { id: 'status.chargerPowerW', type: 'state', common: { name: 'Current charger power', role: 'value.power', type: 'number', read: true, write: false, unit: 'W', def: 0 } },
             { id: 'status.chargerCurrentA', type: 'state', common: { name: 'Current charger current', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
+            { id: 'status.sessionActive', type: 'state', common: { name: 'Charging session active', role: 'indicator', type: 'boolean', read: true, write: false, def: false } },
+            { id: 'status.sessionEnergyWh', type: 'state', common: { name: 'Energy charged in current/last session', role: 'value.power.consumption', type: 'number', read: true, write: false, unit: 'Wh', def: 0 } },
+            { id: 'status.sessionEnergyKWh', type: 'state', common: { name: 'Energy charged in current/last session', role: 'value.power.consumption', type: 'number', read: true, write: false, unit: 'kWh', def: 0 } },
             { id: 'status.setCurrentA', type: 'state', common: { name: 'Configured charger current (amp)', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
             { id: 'status.setCurrentVolatileA', type: 'state', common: { name: 'Configured volatile charger current (amx)', role: 'value.current', type: 'number', read: true, write: false, unit: 'A', def: 0 } },
             { id: 'status.allowedCurrentStepsA', type: 'state', common: { name: 'Allowed charging current steps [A]', role: 'text', type: 'string', read: true, write: false, def: DEFAULT_CURRENT_STEPS_A.join(',') } },
@@ -354,6 +363,9 @@ class GoEGeminiAdapter extends utils.Adapter {
         await this.setStateAck('status.transportRead', this.config.readTransport);
         await this.setStateAck('status.transportWrite', this.config.writeTransport);
         await this.setStateAck('status.simulationModeActive', this.config.defaultSimulationMode);
+        await this.setStateAck('status.sessionActive', false);
+        await this.setStateAck('status.sessionEnergyWh', 0);
+        await this.setStateAck('status.sessionEnergyKWh', 0);
         await this.setStateAck('status.allowedCurrentStepsA', this.getAllowedCurrentSteps().join(','));
         await this.setStateAck('calculation.phaseSwitchUpThresholdW', this.config.phaseSwitchUpThresholdW);
         await this.setStateAck('calculation.phaseSwitchDownThresholdW', this.getPhaseSwitchDownThreshold());
@@ -590,7 +602,8 @@ class GoEGeminiAdapter extends utils.Adapter {
             charger.enabledPhases = ((32 & pha) >> 5) + ((16 & pha) >> 4) + ((8 & pha) >> 3);
         }
 
-        if (Array.isArray(status.nrg) && status.nrg.length >= 7) {
+        const hasPowerSample = Array.isArray(status.nrg) && status.nrg.length >= 7;
+        if (hasPowerSample) {
             const v1 = Number(status.nrg[0]) || 0;
             const v2 = Number(status.nrg[1]) || 0;
             const v3 = Number(status.nrg[2]) || 0;
@@ -599,6 +612,9 @@ class GoEGeminiAdapter extends utils.Adapter {
             const a3 = (Number(status.nrg[6]) || 0) / 10;
             charger.chargerCurrentA = this.round1(a1 + a2 + a3);
             charger.chargerPowerW = Math.max(0, Math.round(v1 * a1 + v2 * a2 + v3 * a3));
+        }
+        if (hasPowerSample) {
+            this.updateSessionEnergyTracking(charger.chargerPowerW);
         }
 
         void this.setStateAck('status.chargerPowerW', charger.chargerPowerW);
@@ -609,6 +625,46 @@ class GoEGeminiAdapter extends utils.Adapter {
         void this.setStateAck('status.enabledPhases', charger.enabledPhases);
         void this.setStateAck('status.effectiveAllowCharging', charger.chargingAllowed);
         void this.setStateAck('diagnostics.readSource', source);
+    }
+
+    updateSessionEnergyTracking(powerW) {
+        const session = this.runtime.session;
+        const nowMs = Date.now();
+        const currentPowerW = Math.max(0, Math.round(Number(powerW) || 0));
+        const startThresholdW = 250;
+        const stopThresholdW = 80;
+        const maxSampleGapSec = 120;
+
+        if (session.active) {
+            if (session.lastSampleTsMs > 0) {
+                const dtSec = (nowMs - session.lastSampleTsMs) / 1000;
+                if (dtSec > 0 && dtSec <= maxSampleGapSec) {
+                    const avgPowerW = Math.max(0, (session.lastPowerW + currentPowerW) / 2);
+                    session.energyWh += (avgPowerW * dtSec) / 3600;
+                }
+            }
+
+            if (currentPowerW <= stopThresholdW) {
+                session.active = false;
+                session.lastSampleTsMs = 0;
+            } else {
+                session.lastSampleTsMs = nowMs;
+            }
+            session.lastPowerW = currentPowerW;
+        } else if (currentPowerW >= startThresholdW) {
+            session.active = true;
+            session.energyWh = 0;
+            session.lastSampleTsMs = nowMs;
+            session.lastPowerW = currentPowerW;
+        } else {
+            session.lastSampleTsMs = 0;
+            session.lastPowerW = currentPowerW;
+        }
+
+        const energyWhRounded = Math.max(0, Math.round(session.energyWh));
+        void this.setStateAck('status.sessionActive', session.active);
+        void this.setStateAck('status.sessionEnergyWh', energyWhRounded);
+        void this.setStateAck('status.sessionEnergyKWh', this.round3(energyWhRounded / 1000));
     }
 
     processV2Status(status, source) {
@@ -1303,6 +1359,10 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     round1(value) {
         return Math.round(value * 10) / 10;
+    }
+
+    round3(value) {
+        return Math.round(value * 1000) / 1000;
     }
 
     delay(ms) {
