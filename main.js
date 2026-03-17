@@ -44,6 +44,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                 connected: false,
                 firmware: '',
                 serial: '',
+                httpReadFailStreak: 0,
                 chargingAllowed: false,
                 carState: 0,
                 chargerPowerW: 0,
@@ -349,6 +350,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             { id: 'diagnostics', type: 'channel', common: { name: 'Diagnostics' } },
             { id: 'diagnostics.readSource', type: 'state', common: { name: 'Last read source', role: 'text', type: 'string', read: true, write: false, def: '' } },
             { id: 'diagnostics.lastError', type: 'state', common: { name: 'Last error', role: 'text', type: 'string', read: true, write: false, def: '' } },
+            { id: 'diagnostics.httpReadFailStreak', type: 'state', common: { name: 'Consecutive failed HTTP status reads', role: 'value', type: 'number', read: true, write: false, def: 0 } },
             { id: 'diagnostics.inputsStale', type: 'state', common: { name: 'One or more required input datapoints are stale', role: 'indicator', type: 'boolean', read: true, write: false, def: false } },
             { id: 'diagnostics.staleInputList', type: 'state', common: { name: 'List of stale/missing required input datapoints', role: 'text', type: 'string', read: true, write: false, def: '' } },
             { id: 'diagnostics.oldestInputAgeSec', type: 'state', common: { name: 'Oldest required input age', role: 'value.interval', type: 'number', read: true, write: false, unit: 's', def: 0 } },
@@ -388,6 +390,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         await this.setStateAck('calculation.phaseSwitchDownThresholdW', this.getPhaseSwitchDownThreshold());
         await this.setStateAck('calculation.maxGridImportW', this.config.maxGridImportW);
         await this.setStateAck('diagnostics.maxInputAgeSec', this.config.maxInputAgeSec);
+        await this.setStateAck('diagnostics.httpReadFailStreak', 0);
     }
 
     registerForeignSubscriptions() {
@@ -515,7 +518,11 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     isTransientNetworkError(err) {
         const code = String(err?.code || err?.cause?.code || '').toUpperCase();
-        return ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED'].includes(code);
+        const msg = String(err?.message || '').toUpperCase();
+        if (['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED'].includes(code)) {
+            return true;
+        }
+        return msg.includes('SOCKET HANG UP') || msg.includes('READ ECONNRESET');
     }
 
     async httpGetWithRetry(path, options = {}, context = 'HTTP request') {
@@ -598,13 +605,17 @@ class GoEGeminiAdapter extends utils.Adapter {
             }
 
             this.runtime.charger.connected = true;
+            this.runtime.charger.httpReadFailStreak = 0;
             await this.setStateAck('info.connection', true);
             await this.setStateAck('status.connection', true);
+            await this.setStateAck('diagnostics.httpReadFailStreak', 0);
             await this.setStateAck('diagnostics.readSource', 'http');
         } catch (err) {
             this.runtime.charger.connected = false;
+            this.runtime.charger.httpReadFailStreak += 1;
             await this.setStateAck('info.connection', false);
             await this.setStateAck('status.connection', false);
+            await this.setStateAck('diagnostics.httpReadFailStreak', this.runtime.charger.httpReadFailStreak);
             await this.setStateAck('diagnostics.lastError', `HTTP read failed: ${err.message || err}`);
             this.log.warn(`HTTP read failed: ${err.message || err}`);
         }
