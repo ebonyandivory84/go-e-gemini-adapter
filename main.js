@@ -60,6 +60,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                 lastCurrentA: null,
                 lastCurrentKey: null,
                 lastPhaseMode: null,
+                lastHttpUnavailableLogAtMs: 0,
             },
             phaseControl: {
                 stableMode: 1,
@@ -1074,6 +1075,17 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     async applyChargerCommands(plan) {
         const { effectiveAllow, targetCurrentFinalA, targetPhaseMode, currentKey, mode, simulationMode } = plan;
+        const usesHttpWrite = this.config.writeTransport === 'http';
+        const hasHttpReadPath = this.config.readTransport === 'http' || this.config.readTransport === 'hybrid';
+
+        if (!simulationMode && usesHttpWrite && hasHttpReadPath && !this.runtime.charger.connected) {
+            const now = Date.now();
+            if (now - this.runtime.command.lastHttpUnavailableLogAtMs >= 60000) {
+                this.runtime.command.lastHttpUnavailableLogAtMs = now;
+                this.log.warn('Skip charger write commands: HTTP connection currently unavailable (last status read failed)');
+            }
+            return;
+        }
 
         if (mode === MODE.GRID_MANUAL) {
             await this.sendPhaseModeIfNeeded(targetPhaseMode, simulationMode);
