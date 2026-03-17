@@ -2,6 +2,7 @@
 
 const utils = require('@iobroker/adapter-core');
 const axios = require('axios');
+const http = require('http');
 const mqtt = require('mqtt');
 
 const MODE = {
@@ -73,6 +74,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             controlMeta: {
                 currentStepSignature: '',
             },
+            evaluationQueue: Promise.resolve(),
         };
     }
 
@@ -82,6 +84,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             this.http = axios.create({
                 baseURL: `http://${this.config.chargerHost}`,
                 timeout: this.config.httpTimeoutMs,
+                httpAgent: new http.Agent({ keepAlive: false, maxSockets: 1 }),
             });
 
             await this.ensureObjects();
@@ -98,14 +101,14 @@ class GoEGeminiAdapter extends utils.Adapter {
                 await this.readStatusHttp();
             }
 
-            await this.evaluateAndApply('startup');
+            await this.enqueueEvaluation('startup');
 
             this.pollTimer = this.setInterval(async () => {
                 try {
                     if (this.config.readTransport === 'http' || this.config.readTransport === 'hybrid') {
                         await this.readStatusHttp();
                     }
-                    await this.evaluateAndApply('poll');
+                    await this.enqueueEvaluation('poll');
                 } catch (err) {
                     this.log.error(`Polling/evaluation error: ${err.message || err}`);
                 }
@@ -408,7 +411,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                     const status = JSON.parse(payload);
                     this.processV1Status(status, 'mqtt');
                     await this.setStateAck('diagnostics.readSource', 'mqtt');
-                    await this.evaluateAndApply('mqtt-status');
+                    await this.enqueueEvaluation('mqtt-status');
                 }
             } catch (err) {
                 this.log.warn(`MQTT message parse error: ${err.message || err}`);
@@ -447,11 +450,43 @@ class GoEGeminiAdapter extends utils.Adapter {
                 return;
             }
 
-            await this.evaluateAndApply(`state-change:${shortId}`);
+            await this.enqueueEvaluation(`state-change:${shortId}`);
             await this.setStateAck(shortId, normalized);
         } catch (err) {
             this.log.error(`State change handling failed: ${err.message || err}`);
         }
+    }
+
+    enqueueEvaluation(trigger) {
+        const run = this.runtime.evaluationQueue
+            .catch(() => undefined)
+            .then(() => this.evaluateAndApply(trigger));
+        this.runtime.evaluationQueue = run;
+        return run;
+    }
+
+    isTransientNetworkError(err) {
+        const code = String(err?.code || err?.cause?.code || '').toUpperCase();
+        return ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED'].includes(code);
+    }
+
+    async httpGetWithRetry(path, options = {}, context = 'HTTP request') {
+        const attempts = 3;
+        let lastError = null;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return await this.http.get(path, options);
+            } catch (err) {
+                lastError = err;
+                if (!this.isTransientNetworkError(err) || attempt === attempts) {
+                    throw err;
+                }
+                const waitMs = 200 * attempt;
+                this.log.debug(`${context} transient failure (attempt ${attempt}/${attempts}): ${err.message || err}; retry in ${waitMs}ms`);
+                await this.delay(waitMs);
+            }
+        }
+        throw lastError || new Error(`${context} failed`);
     }
 
     normalizeControlStateValue(shortId, value) {
@@ -494,14 +529,14 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     async readStatusHttp() {
         try {
-            const r1 = await this.http.get('/status', { transformResponse: data => data });
+            const r1 = await this.httpGetWithRetry('/status', { transformResponse: data => data }, 'HTTP v1 status read');
             const statusV1 = JSON.parse(r1.data);
             this.processV1Status(statusV1, 'http-v1');
 
             if (this.config.enableApiV2) {
                 try {
                     const filter = 'psm,pnp,pha,alw,amp,car';
-                    const r2 = await this.http.get(`/api/status?filter=${filter}`, { transformResponse: data => data });
+                    const r2 = await this.httpGetWithRetry(`/api/status?filter=${filter}`, { transformResponse: data => data }, 'HTTP v2 status read');
                     const statusV2 = JSON.parse(r2.data);
                     this.processV2Status(statusV2, 'http-v2');
                 } catch (errV2) {
@@ -1017,9 +1052,9 @@ class GoEGeminiAdapter extends utils.Adapter {
                 this.log.debug(`MQTT command sent ${topic}: ${payload}`);
             } else {
                 if (key === 'psm') {
-                    await this.http.get(`/api/set?psm=${encodeURIComponent(value)}`);
+                    await this.httpGetWithRetry(`/api/set?psm=${encodeURIComponent(value)}`, {}, `HTTP command ${key}=${value}`);
                 } else {
-                    await this.http.get(`/mqtt?payload=${encodeURIComponent(`${key}=${value}`)}`);
+                    await this.httpGetWithRetry(`/mqtt?payload=${encodeURIComponent(`${key}=${value}`)}`, {}, `HTTP command ${key}=${value}`);
                 }
                 this.log.debug(`HTTP command sent ${key}=${value}`);
             }
