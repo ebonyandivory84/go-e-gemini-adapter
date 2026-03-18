@@ -489,8 +489,8 @@ class GoEGeminiAdapter extends utils.Adapter {
                 return;
             }
 
-            await this.enqueueEvaluation(`state-change:${shortId}`);
             await this.setStateAck(shortId, normalized);
+            await this.enqueueEvaluation(`state-change:${shortId}`);
         } catch (err) {
             if (this.isTransientNetworkError(err)) {
                 this.log.warn(`State change handling transient network failure: ${err.message || err}`);
@@ -589,7 +589,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             case 'control.emergencyStop':
             case 'control.simulationMode':
             case 'control.targetSocEnabled':
-                return !!value;
+                return this.normalizeBoolean(value, false);
             default:
                 return undefined;
         }
@@ -905,9 +905,9 @@ class GoEGeminiAdapter extends utils.Adapter {
     }
 
     async readControlStates() {
-        const allowCharging = !!(await this.getStateValue('control.allowCharging', true));
-        const emergencyStop = !!(await this.getStateValue('control.emergencyStop', false));
-        const simulationMode = !!(await this.getStateValue('control.simulationMode', this.config.defaultSimulationMode));
+        const allowCharging = this.normalizeBoolean(await this.getStateValue('control.allowCharging', true), true);
+        const emergencyStop = this.normalizeBoolean(await this.getStateValue('control.emergencyStop', false), false);
+        const simulationMode = this.normalizeBoolean(await this.getStateValue('control.simulationMode', this.config.defaultSimulationMode), this.config.defaultSimulationMode);
         const mode = this.clampInt(await this.getStateValue('control.mode', this.config.defaultMode), this.config.defaultMode, MODE.PV_EXPORT, MODE.GRID_MANUAL);
 
         let minCurrentA = this.normalizeCurrentToStep(
@@ -934,7 +934,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         ) ?? minCurrentA;
         const gridPhaseMode = this.clampInt(await this.getStateValue('control.gridManual.phaseMode', this.config.defaultGridPhaseMode), this.config.defaultGridPhaseMode, 0, 2);
 
-        const targetSocEnabled = !!(await this.getStateValue('control.targetSocEnabled', this.config.defaultTargetSocEnabled));
+        const targetSocEnabled = this.normalizeBoolean(await this.getStateValue('control.targetSocEnabled', this.config.defaultTargetSocEnabled), this.config.defaultTargetSocEnabled);
         const targetSocPercent = this.clampInt(await this.getStateValue('control.targetSocPercent', this.config.defaultTargetSocPercent), this.config.defaultTargetSocPercent, 1, 100);
 
         return {
@@ -1441,6 +1441,28 @@ class GoEGeminiAdapter extends utils.Adapter {
             return fallback;
         }
         return Math.min(max, Math.max(min, n));
+    }
+
+    normalizeBoolean(value, fallback = false) {
+        if (value === null || value === undefined) {
+            return !!fallback;
+        }
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'number') {
+            return value !== 0;
+        }
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'on'].includes(v)) {
+                return true;
+            }
+            if (['false', '0', 'no', 'off', ''].includes(v)) {
+                return false;
+            }
+        }
+        return !!fallback;
     }
 
     round1(value) {
