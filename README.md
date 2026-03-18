@@ -13,6 +13,7 @@ All modes are selectable via `control.mode`.
 ## Core control states
 
 - `control.allowCharging` (global master switch)
+- `control.emergencyStop` (immediate stop, bypasses start/stop delays)
 - `control.simulationMode` (dry-run, no write commands)
 - `control.mode`
 - `control.gridManual.currentA`
@@ -86,4 +87,3 @@ No PV formula; manual current + phase mode are applied.
 - `diagnostics.inputsStale`
 - `diagnostics.staleInputList`
 - `diagnostics.oldestInputAgeSec`
-

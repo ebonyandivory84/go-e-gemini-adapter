@@ -163,8 +163,13 @@ class GoEGeminiAdapter extends utils.Adapter {
         cfg.phaseSwitchUpThresholdW = this.clampNumber(cfg.phaseSwitchUpThresholdW, 4200, 500, 100000);
         cfg.phaseSwitchHysteresisW = this.clampNumber(cfg.phaseSwitchHysteresisW, 700, 0, 50000);
         cfg.phaseSwitchMinHoldSec = this.clampInt(cfg.phaseSwitchMinHoldSec, 120, 0, 7200);
-        cfg.startDelaySec = this.clampInt(cfg.startDelaySec, 20, 0, 7200);
-        cfg.stopDelaySec = this.clampInt(cfg.stopDelaySec, 120, 0, 7200);
+        cfg.startDelaySec = this.clampInt(cfg.startDelaySec, 5, 0, 7200);
+        cfg.stopDelaySec = this.clampInt(cfg.stopDelaySec, 20, 0, 7200);
+        if (cfg.startDelaySec === 20 && cfg.stopDelaySec === 120) {
+            cfg.startDelaySec = 5;
+            cfg.stopDelaySec = 20;
+            this.log.info('Migrated legacy start/stop delay defaults to 5s/20s');
+        }
         cfg.maxInputAgeSec = this.clampInt(cfg.maxInputAgeSec, 30, 1, 3600);
         cfg.maxGridImportW = this.clampInt(cfg.maxGridImportW, -1, -1, 100000);
         cfg.defaultSimulationMode = !!cfg.defaultSimulationMode;
@@ -193,6 +198,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         const defs = [
             { id: 'control', type: 'channel', common: { name: 'Control' } },
             { id: 'control.allowCharging', type: 'state', common: { name: 'Global allowCharging', role: 'switch.enable', type: 'boolean', read: true, write: true, def: true } },
+            { id: 'control.emergencyStop', type: 'state', common: { name: 'Emergency stop (immediate, bypasses start/stop delays)', role: 'switch.enable', type: 'boolean', read: true, write: true, def: false } },
             { id: 'control.simulationMode', type: 'state', common: { name: 'Simulation mode (dry run, no write to charger)', role: 'switch.enable', type: 'boolean', read: true, write: true, def: this.config.defaultSimulationMode } },
             {
                 id: 'control.mode',
@@ -370,6 +376,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         await this.updateCurrentControlStateMeta(true);
 
         await this.ensureStateDefault('control.allowCharging', true);
+        await this.ensureStateDefault('control.emergencyStop', false);
         await this.ensureStateDefault('control.simulationMode', this.config.defaultSimulationMode);
         await this.ensureStateDefault('control.mode', this.config.defaultMode);
         await this.ensureStateDefault('control.gridManual.currentA', this.config.defaultGridCurrentA);
@@ -579,6 +586,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             case 'control.targetSocPercent':
                 return this.clampInt(value, this.config.defaultTargetSocPercent, 1, 100);
             case 'control.allowCharging':
+            case 'control.emergencyStop':
             case 'control.simulationMode':
             case 'control.targetSocEnabled':
                 return !!value;
@@ -846,7 +854,12 @@ class GoEGeminiAdapter extends utils.Adapter {
             currentKey = this.supportsAmx() ? 'amx' : 'amp';
         }
 
-        const effectiveAllow = this.applyAllowDelays(rawAllow);
+        if (control.emergencyStop) {
+            this.runtime.allowControl.stableAllow = false;
+            this.runtime.allowControl.startCandidateSinceMs = 0;
+            this.runtime.allowControl.stopCandidateSinceMs = 0;
+        }
+        const effectiveAllow = control.emergencyStop ? false : this.applyAllowDelays(rawAllow);
         decision += `rawAllow=${rawAllow}, effectiveAllow=${effectiveAllow}; `;
 
         await this.setStateAck('status.activeMode', MODE_LABEL[control.mode] || 'unknown');
@@ -865,6 +878,9 @@ class GoEGeminiAdapter extends utils.Adapter {
 
         if (!control.allowCharging) {
             decision += 'global allowCharging=false; ';
+        }
+        if (control.emergencyStop) {
+            decision += 'emergencyStop=true (immediate stop); ';
         }
         if (freshness.stale && control.mode !== MODE.GRID_MANUAL) {
             decision += `staleInputs=${freshness.staleKeys.join('|')}; `;
@@ -890,6 +906,7 @@ class GoEGeminiAdapter extends utils.Adapter {
 
     async readControlStates() {
         const allowCharging = !!(await this.getStateValue('control.allowCharging', true));
+        const emergencyStop = !!(await this.getStateValue('control.emergencyStop', false));
         const simulationMode = !!(await this.getStateValue('control.simulationMode', this.config.defaultSimulationMode));
         const mode = this.clampInt(await this.getStateValue('control.mode', this.config.defaultMode), this.config.defaultMode, MODE.PV_EXPORT, MODE.GRID_MANUAL);
 
@@ -922,6 +939,7 @@ class GoEGeminiAdapter extends utils.Adapter {
 
         return {
             allowCharging,
+            emergencyStop,
             simulationMode,
             mode,
             gridCurrentA,
