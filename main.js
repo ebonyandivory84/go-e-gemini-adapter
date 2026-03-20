@@ -172,6 +172,8 @@ class GoEGeminiAdapter extends utils.Adapter {
         }
         cfg.maxInputAgeSec = this.clampInt(cfg.maxInputAgeSec, 30, 1, 3600);
         cfg.maxGridImportW = this.clampInt(cfg.maxGridImportW, -1, -1, 100000);
+        cfg.pvOnlyFlowBufferW = this.clampNumber(cfg.pvOnlyFlowBufferW, 1000, 0, 100000);
+        cfg.batteryFullSocPercent = this.clampNumber(cfg.batteryFullSocPercent, 99, 0, 100);
         cfg.defaultSimulationMode = !!cfg.defaultSimulationMode;
 
         cfg.minCurrentA = this.normalizeCurrentToStep(this.clampInt(cfg.minCurrentA, 6, 6, 32), 6, 32, 'up') || DEFAULT_CURRENT_STEPS_A[0];
@@ -340,6 +342,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             { id: 'inputs.houseConsumptionW', type: 'state', common: { name: 'House consumption', role: 'value.power', type: 'number', read: true, write: false, unit: 'W', def: 0 } },
             { id: 'inputs.homeBatteryChargeW', type: 'state', common: { name: 'Home battery charging power', role: 'value.power', type: 'number', read: true, write: false, unit: 'W', def: 0 } },
             { id: 'inputs.homeBatteryDischargeW', type: 'state', common: { name: 'Home battery discharging power', role: 'value.power', type: 'number', read: true, write: false, unit: 'W', def: 0 } },
+            { id: 'inputs.homeBatterySocPercent', type: 'state', common: { name: 'Home battery SoC', role: 'level', type: 'number', read: true, write: false, unit: '%', def: 0 } },
 
             { id: 'calculation', type: 'channel', common: { name: 'Calculation details' } },
             { id: 'calculation.formula', type: 'state', common: { name: 'Active formula', role: 'text', type: 'string', read: true, write: false, def: '' } },
@@ -408,6 +411,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             this.config.houseConsumptionObjectId,
             this.config.homeBatteryChargeObjectId,
             this.config.homeBatteryDischargeObjectId,
+            this.config.homeBatterySocObjectId,
             this.config.carSocObjectId,
         ].filter(Boolean);
 
@@ -766,6 +770,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         await this.setStateAck('inputs.houseConsumptionW', inputs.houseConsumptionW);
         await this.setStateAck('inputs.homeBatteryChargeW', inputs.homeBatteryChargeW);
         await this.setStateAck('inputs.homeBatteryDischargeW', inputs.homeBatteryDischargeW);
+        await this.setStateAck('inputs.homeBatterySocPercent', inputs.homeBatterySocPercent);
         await this.setStateAck('status.carSocPercent', inputs.carSocPercent);
 
         const control = await this.readControlStates();
@@ -805,22 +810,9 @@ class GoEGeminiAdapter extends utils.Adapter {
             availablePowerW = Number.NaN;
             gridImportLimitExceededW = 0;
             decision += `gridManual current=${targetCurrentFinalA}A phaseMode=${targetPhaseMode}; `;
-        } else if (control.mode === MODE.PV_EXPORT) {
-            activeFormula = 'PV_EXPORT: available = gridExportW - gridImportW + chargerPowerW - reservePowerW';
-            availablePowerW = inputs.gridExportW - inputs.gridImportW + chargerPowerW - this.config.reservePowerW;
-            if (this.config.maxGridImportW >= 0) {
-                gridImportLimitExceededW = Math.max(0, inputs.gridImportW - this.config.maxGridImportW);
-                availablePowerW -= gridImportLimitExceededW;
-            }
-            targetPhaseMode = this.calculateDynamicPhaseMode(availablePowerW);
-            const phases = targetPhaseMode === 2 ? 3 : 1;
-            targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
-            targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
-            decision += `pvExport available=${Math.round(availablePowerW)}W chargerComp=${Math.round(chargerPowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
-        } else {
-            activeFormula = 'PV_BATTERY_LAST: available = pvPowerW - (houseConsumptionW - chargerPowerW) + batteryChargeW - batteryDischargeW - reservePowerW';
+        } else if (control.mode === MODE.PV_EXPORT || control.mode === MODE.PV_BATTERY_LAST) {
             nonEvHouseConsumptionW = Math.max(0, inputs.houseConsumptionW - chargerPowerW);
-            availablePowerW = inputs.pvPowerW - nonEvHouseConsumptionW + inputs.homeBatteryChargeW - inputs.homeBatteryDischargeW - this.config.reservePowerW;
+            availablePowerW = inputs.pvPowerW - nonEvHouseConsumptionW - this.config.reservePowerW;
             if (this.config.maxGridImportW >= 0) {
                 gridImportLimitExceededW = Math.max(0, inputs.gridImportW - this.config.maxGridImportW);
                 availablePowerW -= gridImportLimitExceededW;
@@ -829,11 +821,24 @@ class GoEGeminiAdapter extends utils.Adapter {
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
             targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
-            decision += `pvBatteryLast available=${Math.round(availablePowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
+
+            if (control.mode === MODE.PV_EXPORT) {
+                activeFormula = 'PV_EXPORT: available = pvPowerW - (houseConsumptionW - chargerPowerW) - reservePowerW; requires battery-full and no grid/akku discharge over buffer';
+                decision += `pvExport available=${Math.round(availablePowerW)}W nonEvHouse=${Math.round(nonEvHouseConsumptionW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
+            } else {
+                activeFormula = 'PV_BATTERY_LAST: available = pvPowerW - (houseConsumptionW - chargerPowerW) - reservePowerW; no grid/akku discharge over buffer';
+                decision += `pvBatteryLast available=${Math.round(availablePowerW)}W nonEvHouse=${Math.round(nonEvHouseConsumptionW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
+            }
         }
 
         let rawAllow = control.allowCharging && !socLimitReached;
         let currentKey = 'amx';
+
+        const flowBufferW = this.config.pvOnlyFlowBufferW;
+        const gridImportWithinBuffer = inputs.gridImportW <= flowBufferW;
+        const batteryDischargeWithinBuffer = inputs.homeBatteryDischargeW <= flowBufferW;
+        const batterySocKnown = Number.isFinite(inputs.homeBatterySocPercent) && inputs.homeBatterySocPercent > 0;
+        const batteryFull = batterySocKnown && inputs.homeBatterySocPercent >= this.config.batteryFullSocPercent;
 
         if (control.mode === MODE.GRID_MANUAL) {
             if (targetCurrentFinalA < minCurrentA) {
@@ -846,6 +851,12 @@ class GoEGeminiAdapter extends utils.Adapter {
                 rawAllow = false;
             }
             if (targetCurrentFinalA < minCurrentA) {
+                rawAllow = false;
+            }
+            if (!gridImportWithinBuffer || !batteryDischargeWithinBuffer) {
+                rawAllow = false;
+            }
+            if (control.mode === MODE.PV_EXPORT && !batteryFull) {
                 rawAllow = false;
             }
             if (freshness.stale) {
@@ -887,6 +898,17 @@ class GoEGeminiAdapter extends utils.Adapter {
         }
         if (this.config.maxGridImportW >= 0 && gridImportLimitExceededW > 0) {
             decision += `gridImportLimitExceededBy=${Math.round(gridImportLimitExceededW)}W; `;
+        }
+        if (!gridImportWithinBuffer && control.mode !== MODE.GRID_MANUAL) {
+            decision += `gridImportOverBuffer=${Math.round(inputs.gridImportW)}W>${Math.round(flowBufferW)}W; `;
+        }
+        if (!batteryDischargeWithinBuffer && control.mode !== MODE.GRID_MANUAL) {
+            decision += `batteryDischargeOverBuffer=${Math.round(inputs.homeBatteryDischargeW)}W>${Math.round(flowBufferW)}W; `;
+        }
+        if (control.mode === MODE.PV_EXPORT && !batteryFull) {
+            decision += batterySocKnown
+                ? `batteryNotFull (${Math.round(inputs.homeBatterySocPercent)}% < ${Math.round(this.config.batteryFullSocPercent)}%); `
+                : 'batterySocMissingOrZero; ';
         }
         if (control.simulationMode) {
             decision += 'simulationMode=true; ';
@@ -958,9 +980,11 @@ class GoEGeminiAdapter extends utils.Adapter {
         const houseConsumption = await this.readForeignPositiveValueWithMeta(this.config.houseConsumptionObjectId, 'houseConsumptionW');
         const homeBatteryCharge = await this.readForeignPositiveValueWithMeta(this.config.homeBatteryChargeObjectId, 'homeBatteryChargeW');
         const homeBatteryDischarge = await this.readForeignPositiveValueWithMeta(this.config.homeBatteryDischargeObjectId, 'homeBatteryDischargeW');
+        const homeBatterySoc = await this.readForeignRawValueWithMeta(this.config.homeBatterySocObjectId, 'homeBatterySocPercent');
 
         const carSoc = await this.readForeignRawValueWithMeta(this.config.carSocObjectId, 'carSocPercent');
         const carSocPercent = this.clampNumber(carSoc.value, 0, 0, 100);
+        const homeBatterySocPercent = this.clampNumber(homeBatterySoc.value, 0, 0, 100);
 
         return {
             gridExportW: gridExport.value,
@@ -969,6 +993,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             houseConsumptionW: houseConsumption.value,
             homeBatteryChargeW: homeBatteryCharge.value,
             homeBatteryDischargeW: homeBatteryDischarge.value,
+            homeBatterySocPercent,
             carSocPercent,
             _meta: {
                 gridExport,
@@ -977,6 +1002,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                 houseConsumption,
                 homeBatteryCharge,
                 homeBatteryDischarge,
+                homeBatterySoc,
                 carSoc,
             },
         };
@@ -989,12 +1015,23 @@ class GoEGeminiAdapter extends utils.Adapter {
 
         const required = [];
         if (mode === MODE.PV_EXPORT) {
-            required.push(inputs._meta.gridExport, inputs._meta.gridImport);
+            required.push(
+                inputs._meta.pvPower,
+                inputs._meta.houseConsumption,
+                inputs._meta.gridImport,
+                inputs._meta.homeBatteryDischarge,
+                inputs._meta.homeBatterySoc,
+            );
             if (this.config.maxGridImportW >= 0) {
                 required.push(inputs._meta.gridImport);
             }
         } else if (mode === MODE.PV_BATTERY_LAST) {
-            required.push(inputs._meta.pvPower, inputs._meta.houseConsumption);
+            required.push(
+                inputs._meta.pvPower,
+                inputs._meta.houseConsumption,
+                inputs._meta.gridImport,
+                inputs._meta.homeBatteryDischarge,
+            );
             if (this.config.maxGridImportW >= 0) {
                 required.push(inputs._meta.gridImport);
             }

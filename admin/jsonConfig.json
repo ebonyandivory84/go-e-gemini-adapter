@@ -134,6 +134,11 @@
           "label": "Datenpunkt Hausakku Entladeleistung [W]",
           "help": "Nur positive Werte fuer Akku-Entladung. 0 wenn nicht entladend."
         },
+        "homeBatterySocObjectId": {
+          "type": "objectId",
+          "label": "Datenpunkt Hausakku Ladezustand [%]",
+          "help": "Fuer PV-only erforderlich: Laden nur wenn Hausakku >= Schwellwert (z. B. 99%)."
+        },
         "carSocObjectId": {
           "type": "objectId",
           "label": "Datenpunkt Auto-Batterie SoC [%]",
@@ -209,6 +214,22 @@
           "min": -1,
           "max": 20000,
           "step": 50
+        },
+        "pvOnlyFlowBufferW": {
+          "type": "number",
+          "label": "PV-Puffer fuer Netz/Akku-Fluesse [W]",
+          "help": "In PV-Modi wird Laden gestoppt, wenn Netzbezug oder Akku-Entladung ueber diesem Puffer liegen (Anti-Flattern).",
+          "min": 0,
+          "max": 10000,
+          "step": 50
+        },
+        "batteryFullSocPercent": {
+          "type": "number",
+          "label": "Hausakku gilt als voll ab [%] (nur PV-only)",
+          "help": "Im Modus PV-only wird nur geladen, wenn der Hausakku mindestens diesen SoC erreicht.",
+          "min": 0,
+          "max": 100,
+          "step": 1
         },
         "minCurrentA": {
           "type": "number",
