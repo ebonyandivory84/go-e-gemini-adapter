@@ -806,8 +806,8 @@ class GoEGeminiAdapter extends utils.Adapter {
             gridImportLimitExceededW = 0;
             decision += `gridManual current=${targetCurrentFinalA}A phaseMode=${targetPhaseMode}; `;
         } else if (control.mode === MODE.PV_EXPORT) {
-            activeFormula = 'PV_EXPORT: available = gridExportW - gridImportW - reservePowerW';
-            availablePowerW = inputs.gridExportW - inputs.gridImportW - this.config.reservePowerW;
+            activeFormula = 'PV_EXPORT: available = gridExportW - gridImportW + chargerPowerW - reservePowerW';
+            availablePowerW = inputs.gridExportW - inputs.gridImportW + chargerPowerW - this.config.reservePowerW;
             if (this.config.maxGridImportW >= 0) {
                 gridImportLimitExceededW = Math.max(0, inputs.gridImportW - this.config.maxGridImportW);
                 availablePowerW -= gridImportLimitExceededW;
@@ -816,7 +816,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
             targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
-            decision += `pvExport available=${Math.round(availablePowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
+            decision += `pvExport available=${Math.round(availablePowerW)}W chargerComp=${Math.round(chargerPowerW)}W targetRaw=${targetCurrentRawA}A phaseMode=${targetPhaseMode}; `;
         } else {
             activeFormula = 'PV_BATTERY_LAST: available = pvPowerW - (houseConsumptionW - chargerPowerW) + batteryChargeW - batteryDischargeW - reservePowerW';
             nonEvHouseConsumptionW = Math.max(0, inputs.houseConsumptionW - chargerPowerW);

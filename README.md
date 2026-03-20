@@ -39,7 +39,7 @@ Configure these in instance settings. Use separate positive values, no signed di
 
 ### Mode 1: PV only
 
-`availablePowerW = gridExportW - gridImportW - reservePowerW`
+`availablePowerW = gridExportW - gridImportW + chargerPowerW - reservePowerW`
 
 ### Mode 2: PV only (go-e = priority)
 
