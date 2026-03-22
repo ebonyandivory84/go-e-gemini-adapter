@@ -1,104 +1,230 @@
 # ioBroker.go-e-gemini-adapter
 
-Custom ioBroker adapter for go-e Gemini chargers with deterministic control logic and clear object IDs.
+Custom ioBroker Adapter fuer go-e Gemini Charger mit deterministischer Lade-Logik, klaren Datenpunkten und robustem HTTP/MQTT Betrieb.
 
-## Charging modes
+## Was der Adapter kann
 
-- `1 = PV only`
-- `2 = PV only (go-e = priority)`
-- `3 = grid mode`
+- Drei Betriebsmodi:
+  - `1 = PV only`
+  - `2 = PV only (go-e = priority)`
+  - `3 = grid mode`
+- Direkte Laufzeit-Steuerung ueber ioBroker States (`control.*`)
+- Sofortiger Not-Stopp (`control.emergencyStop`) mit Prioritaet vor allen anderen Freigaben
+- Start-/Stop-Verzoegerung gegen Flattern (`startDelaySec`, `stopDelaySec`)
+- Dynamische Phasenwahl mit Hysterese + Mindesthaltezeit
+- Optionales SoC-Limit fuer das Fahrzeug (`targetSocEnabled`, `targetSocPercent`)
+- Eingangsdaten-Freshness-Pruefung mit Blockierung bei veralteten/missing Werten
+- Simulation/Dry-Run Modus ohne reale Schreibbefehle
+- HTTP und MQTT als Lese-/Schreibtransport (auch Hybrid beim Lesen)
+- Diagnostik- und Entscheidungs-States fuer transparentes Debugging
 
-All modes are selectable via `control.mode`.
+## Architektur (vereinfacht)
 
-## Core control states
+```text
+Externe Zaehler/PV/Batterie States
+          |
+          v
+   inputs.* + Freshness Check
+          |
+          v
+      Entscheidungslogik
+  (Modus, Limits, Delays, Safety)
+          |
+          v
+  control -> effectiveAllow/current/phase
+          |
+          v
+      go-e Befehle (HTTP/MQTT)
+          |
+          v
+ status.* / diagnostics.* Rueckmeldung
+```
 
-- `control.allowCharging` (global master switch)
-- `control.emergencyStop` (immediate stop, bypasses start/stop delays)
-- `control.simulationMode` (dry-run, no write commands)
+## Betriebsmodi und Logik
+
+### Modus 1: `PV only` (`control.mode = 1`)
+
+Berechnung:
+
+`availablePowerW = pvPowerW - (houseConsumptionW - chargerPowerW) - reservePowerW`
+
+Zusatzbedingungen:
+
+- Hausakku muss als "voll" gelten:
+  `homeBatterySocPercent >= batteryFullSocPercent`
+- Netzbezug und Akku-Entladung muessen innerhalb des Puffers liegen:
+  - `gridImportW <= pvOnlyFlowBufferW`
+  - `homeBatteryDischargeW <= pvOnlyFlowBufferW`
+- Bei aktivem `maxGridImportW` wird Ueberschreitung direkt von `availablePowerW` abgezogen.
+
+### Modus 2: `PV only (go-e = priority)` (`control.mode = 2`)
+
+Berechnung:
+
+`availablePowerW = pvPowerW - (houseConsumptionW - chargerPowerW) - reservePowerW`
+
+Zusatzbedingungen:
+
+- Kein Akku-Voll-Kriterium
+- Netzbezug und Akku-Entladung muessen innerhalb des Puffers liegen
+- Optionaler `maxGridImportW` wird ebenfalls eingerechnet
+
+### Modus 3: `grid mode` (`control.mode = 3`)
+
+- Keine PV-Leistungsformel
+- Verwendet direkte Sollwerte:
+  - `control.gridManual.currentA`
+  - `control.gridManual.phaseMode`
+
+## Freigabe-Logik (`allowCharging` vs. `emergencyStop`)
+
+- `control.allowCharging` ist der globale Master-Switch.
+- `control.emergencyStop` hat immer Prioritaet und stoppt sofort (ohne Start/Stop-Delay).
+- Effektive Freigabe:
+
+`effectiveAllow = emergencyStop ? false : delayed(rawAllow)`
+
+Dabei enthaelt `rawAllow` alle fachlichen Bedingungen (Modus, Leistung, SoC, Freshness, Buffer, usw.).
+
+## Transport und Schnittstellen
+
+### HTTP
+
+- Status lesen:
+  - `/status` (v1)
+  - optional `/api/status` mit Filter (v2)
+- Befehle schreiben:
+  - v1: `/mqtt?payload=key=value`
+  - v2 Phasenmodus: `/api/set?psm=...`
+
+### MQTT
+
+- Status Topic: `<prefix>/<serial>/status`
+- Command Topic: `<prefix>/<serial>/cmd/req`
+- Standard Prefix: `go-eCharger`
+
+## Konfiguration (Admin)
+
+### Verbindung
+
+- `chargerHost`: IP/Hostname des Chargers
+- `pollIntervalSec`: Poll-Intervall (auch bei Hybrid relevant)
+- `httpTimeoutMs`: Timeout fuer HTTP Requests
+- `readTransport`: `http | mqtt | hybrid`
+- `writeTransport`: `http | mqtt`
+- `enableApiV2`: noetig fuer v2-Features (z.B. `psm`)
+
+### MQTT
+
+- `mqttBrokerUrl`, `mqttUsername`, `mqttPassword`
+- `mqttTopicPrefix`, `mqttSerial`
+
+### Eingangsdaten
+
+Konzept: positive-only Modell, getrennte Werte fuer Import/Export und Charge/Discharge.
+
+- `gridImportObjectId`
+- `gridExportObjectId`
+- `pvPowerObjectId`
+- `houseConsumptionObjectId`
+- `homeBatteryDischargeObjectId`
+- `homeBatteryChargeObjectId`
+- `homeBatterySocObjectId`
+- `carSocObjectId`
+
+Hinweis:
+
+- Die Regelung verwendet aktiv vor allem `pvPower`, `houseConsumption`, `gridImport`, `homeBatteryDischarge`, `homeBatterySoc` (Modus-abhaengig).
+- `gridExport` und `homeBatteryCharge` werden eingelesen und als Inputs gespiegelt, sind aber aktuell nicht Kernbestandteil der Freigabeformel.
+
+### Regelung & Stabilitaet
+
+- `reservePowerW`
+- `phaseSwitchUpThresholdW`
+- `phaseSwitchHysteresisW`
+- `phaseSwitchMinHoldSec`
+- `startDelaySec`, `stopDelaySec`
+- `maxInputAgeSec`
+- `maxGridImportW` (`-1` deaktiviert)
+- `pvOnlyFlowBufferW`
+- `batteryFullSocPercent`
+- `minCurrentA`, `maxCurrentA`
+- `commandMinIntervalMs`
+
+### Startwerte
+
+- `defaultMode`
+- `defaultGridCurrentA`
+- `defaultGridPhaseMode`
+- `defaultTargetSocEnabled`
+- `defaultTargetSocPercent`
+- `defaultSimulationMode`
+
+## Wichtige Datenpunkte
+
+### Steuerung (`control.*`)
+
+- `control.allowCharging`
+- `control.emergencyStop`
+- `control.simulationMode`
 - `control.mode`
 - `control.gridManual.currentA`
-- `control.gridManual.phaseMode` (`0 auto / 1 single / 2 three`)
+- `control.gridManual.phaseMode`
 - `control.minCurrentA`
 - `control.maxCurrentA`
 - `control.targetSocEnabled`
 - `control.targetSocPercent`
 
-## Required input datapoints (positive-only model)
+### Status (`status.*`)
 
-Configure these in instance settings. Use separate positive values, no signed direction datapoints.
+- `status.connection`
+- `status.activeMode`
+- `status.effectiveAllowCharging`
+- `status.targetPhaseMode`, `status.actualPhaseMode`
+- `status.chargerPowerW`, `status.chargerCurrentA`
+- `status.setCurrentA`, `status.setCurrentVolatileA`
+- `status.lastCommand`, `status.lastCommandAt`
+- `status.sessionActive`, `status.sessionEnergyWh`, `status.sessionEnergyKWh`
+- `status.decision` (wichtigster Debug-State)
 
-- `pvPowerObjectId` -> current PV power [W]
-- `houseConsumptionObjectId` -> current house consumption [W] (incl. wallbox at house meter)
-- `gridImportObjectId` -> current grid import [W]
-- `homeBatteryDischargeObjectId` -> home battery discharging power [W]
-- `homeBatterySocObjectId` -> home battery SoC [%] (required for mode 1)
-- `gridExportObjectId` -> optional monitoring value [W]
-- `homeBatteryChargeObjectId` -> optional monitoring value [W]
-- `carSocObjectId` -> optional car SoC [%]
+### Diagnostik (`diagnostics.*`)
 
-## Formulas
-
-### Mode 1: PV only
-
-`nonEvHouseConsumptionW = houseConsumptionW - chargerPowerW`
-
-`availablePowerW = pvPowerW - nonEvHouseConsumptionW - reservePowerW`
-
-Additional requirements:
-- home battery must be full: `homeBatterySocPercent >= batteryFullSocPercent`
-- no significant grid import: `gridImportW <= pvOnlyFlowBufferW`
-- no significant home battery discharge: `homeBatteryDischargeW <= pvOnlyFlowBufferW`
-
-### Mode 2: PV only (go-e = priority)
-
-`nonEvHouseConsumptionW = houseConsumptionW - chargerPowerW`
-
-`availablePowerW = pvPowerW - nonEvHouseConsumptionW - reservePowerW`
-
-Additional requirements:
-- no significant grid import: `gridImportW <= pvOnlyFlowBufferW`
-- no significant home battery discharge: `homeBatteryDischargeW <= pvOnlyFlowBufferW`
-
-### Mode 3: grid mode
-
-No PV formula; manual current + phase mode are applied.
-
-## Implemented safety/stability features
-
-- Start/stop delays (`startDelaySec`, `stopDelaySec`)
-- Phase-switch hysteresis + hold time (`phaseSwitchUpThresholdW`, `phaseSwitchHysteresisW`, `phaseSwitchMinHoldSec`)
-- Stale-input protection (`maxInputAgeSec`)
-  - In PV modes charging is blocked if required inputs are too old/missing.
-- Optional max grid import limiter (`maxGridImportW`)
-  - `-1` disables this limiter.
-- PV flow buffer for anti-flutter (`pvOnlyFlowBufferW`)
-  - Limits tolerated grid import + battery discharge in PV modes.
-- Home battery full threshold for strict PV-only (`batteryFullSocPercent`)
-- Simulation mode (global dry-run)
-  - Available as default config and runtime state.
-
-## API support
-
-- HTTP API v1 + v2
-- MQTT status + command topics
-
-### HTTP
-
-- read: `/status` (+ optional `/api/status`)
-- write v1 keys: `/mqtt?payload=key=value`
-- write v2 phase mode: `/api/set?psm=...`
-
-### MQTT
-
-- status: `<prefix>/<serial>/status`
-- command: `<prefix>/<serial>/cmd/req`
-
-(default prefix: `go-eCharger`)
-
-## Diagnostic states
-
-- `status.decision`
 - `diagnostics.lastError`
 - `diagnostics.inputsStale`
 - `diagnostics.staleInputList`
 - `diagnostics.oldestInputAgeSec`
+- `diagnostics.httpReadFailStreak`
+- `diagnostics.readSource`
+
+## Wie Entscheidungen nachvollziehen?
+
+1. `status.decision` lesen (enthaelt Trigger + Blockgruende)
+2. `diagnostics.inputsStale` und `diagnostics.staleInputList` pruefen
+3. `status.effectiveAllowCharging` mit `control.allowCharging` und `control.emergencyStop` abgleichen
+4. `status.lastCommand` / `status.lastCommandAt` auf gesendete Befehle pruefen
+
+## Screenshots
+
+Es gibt im Repo einen Ordner fuer Doku-Bilder:
+
+- `docs/screenshots/`
+
+Lege dort Screenshots ab (z.B. Admin-Konfiguration, Objektbaum, Live-States) und referenziere sie hier.
+Eine genaue Vorlage mit Dateinamen findest du in:
+
+- `docs/screenshots/README.md`
+
+## Troubleshooting (kurz)
+
+- Laedt nicht trotz PV:
+  - `status.decision` auf Buffer-, SoC- oder Freshness-Blocker pruefen.
+- Keine Befehle am Charger:
+  - `status.transportWrite` pruefen, MQTT Verbindung oder HTTP Erreichbarkeit testen.
+- Werte "springen":
+  - `startDelaySec`, `stopDelaySec`, `phaseSwitchMinHoldSec` erhoehen.
+- Unerwarteter Netzbezug:
+  - `reservePowerW` erhoehen, `maxGridImportW` aktivieren/justieren.
+
+## Lizenz
+
+MIT
