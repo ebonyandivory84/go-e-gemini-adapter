@@ -2,6 +2,8 @@
 
 Custom ioBroker Adapter fuer go-e Gemini Charger mit deterministischer Lade-Logik, klaren Datenpunkten und robustem HTTP/MQTT Betrieb.
 
+![go-e Adapter mit PV](assets/go-e.png)
+
 ## Was der Adapter kann
 
 - Drei Betriebsmodi:
@@ -205,12 +207,11 @@ Hinweis:
 
 ## Screenshots
 
-Es gibt im Repo einen Ordner fuer Doku-Bilder:
+### Instanz-Settings (ioBroker Admin)
 
-- `docs/screenshots/`
+![Instanz-Settings](assets/Settings.png)
 
-Lege dort Screenshots ab (z.B. Admin-Konfiguration, Objektbaum, Live-States) und referenziere sie hier.
-Eine genaue Vorlage mit Dateinamen findest du in:
+Optionaler Doku-Ordner fuer weitere Screenshots:
 
 - `docs/screenshots/README.md`
 
