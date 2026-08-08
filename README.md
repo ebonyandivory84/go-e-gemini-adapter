@@ -146,6 +146,8 @@ Hinweis:
 - `phaseSwitchHysteresisW`
 - `phaseSwitchMinHoldSec`
 - `startDelaySec`, `stopDelaySec`
+- `currentRampDownHoldSec` (nur PV-Modi: Reduktion des Ladestroms wird entprellt, Erhoehungen sofort)
+- `sessionStopGraceSec` (Gnadenfrist vor Session-Ende, verhindert Session-Reset durch kurze PV-Ladepausen)
 - `maxInputAgeSec`
 - `maxGridImportW` (`-1` deaktiviert)
 - `pvOnlyFlowBufferW`
@@ -222,7 +224,7 @@ Optionaler Doku-Ordner fuer weitere Screenshots:
 - Keine Befehle am Charger:
   - `status.transportWrite` pruefen, MQTT Verbindung oder HTTP Erreichbarkeit testen.
 - Werte "springen":
-  - `startDelaySec`, `stopDelaySec`, `phaseSwitchMinHoldSec` erhoehen.
+  - `startDelaySec`, `stopDelaySec`, `phaseSwitchMinHoldSec`, `currentRampDownHoldSec` erhoehen.
 - Unerwarteter Netzbezug:
   - `reservePowerW` erhoehen, `maxGridImportW` aktivieren/justieren.
 

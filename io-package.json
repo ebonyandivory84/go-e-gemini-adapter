@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "go-e-gemini-adapter",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "news": {
+      "0.1.1": {
+        "en": "Session energy no longer resets on brief PV-triggered charging pauses (sessionStopGraceSec); charging current now ramps down smoothly instead of jumping, increases still apply immediately (currentRampDownHoldSec)",
+        "de": "Session-Energiezählung wird bei kurzen PV-bedingten Ladepausen nicht mehr genullt (sessionStopGraceSec); Ladestrom wird beim Herunterregeln jetzt entprellt statt hart zu springen, Erhöhungen bleiben sofort wirksam (currentRampDownHoldSec)"
+      },
       "0.1.0": {
         "en": "Initial custom adapter with PV/Grid modes, HTTP+MQTT support and explicit object model",
         "de": "Initiale Version mit PV-/Netz-Modi, HTTP+MQTT-Unterstützung und explizitem Objektmodell"
@@ -76,6 +80,8 @@
     "phaseSwitchMinHoldSec": 120,
     "startDelaySec": 5,
     "stopDelaySec": 20,
+    "currentRampDownHoldSec": 90,
+    "sessionStopGraceSec": 180,
     "maxInputAgeSec": 30,
     "maxGridImportW": -1,
     "pvOnlyFlowBufferW": 1000,

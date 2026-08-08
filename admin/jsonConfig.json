@@ -199,6 +199,22 @@
           "max": 1800,
           "step": 1
         },
+        "currentRampDownHoldSec": {
+          "type": "number",
+          "label": "Haltezeit vor Reduktion der Ladeleistung [s]",
+          "help": "Nur PV-Modi: Eine niedrigere Soll-Stromstaerke wird erst uebernommen, wenn sie so lange durchgaengig ansteht. Erhoehungen (mehr Sonne) werden weiterhin sofort uebernommen.",
+          "min": 0,
+          "max": 1800,
+          "step": 1
+        },
+        "sessionStopGraceSec": {
+          "type": "number",
+          "label": "Gnadenfrist vor Session-Ende [s]",
+          "help": "Ladeleistung muss so lange durchgaengig unter der Stop-Schwelle (80W) bleiben, bevor die Session als beendet gilt und status.sessionEnergyWh zurueckgesetzt wird. Ueberbrueckt kurze Ladepausen beim automatischen Neusetzen der PV-Ladeleistung.",
+          "min": 0,
+          "max": 1800,
+          "step": 1
+        },
         "maxInputAgeSec": {
           "type": "number",
           "label": "Maximales Alter externer Datenpunkte [s]",

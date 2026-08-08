@@ -1,6 +1,6 @@
 {
   "name": "iobroker.go-e-gemini-adapter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Custom go-e Gemini adapter with explicit charging modes and clear object model",
   "main": "main.js",
   "author": "Sebastian + Codex",

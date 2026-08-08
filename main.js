@@ -84,6 +84,12 @@ class GoEGeminiAdapter extends utils.Adapter {
                 energyWh: 0,
                 lastSampleTsMs: 0,
                 lastPowerW: 0,
+                belowStopSinceMs: 0,
+            },
+            currentRamp: {
+                appliedA: null,
+                candidateA: null,
+                candidateSinceMs: 0,
             },
         };
     }
@@ -170,6 +176,8 @@ class GoEGeminiAdapter extends utils.Adapter {
             cfg.stopDelaySec = 20;
             this.log.info('Migrated legacy start/stop delay defaults to 5s/20s');
         }
+        cfg.currentRampDownHoldSec = this.clampInt(cfg.currentRampDownHoldSec, 90, 0, 1800);
+        cfg.sessionStopGraceSec = this.clampInt(cfg.sessionStopGraceSec, 180, 0, 1800);
         cfg.maxInputAgeSec = this.clampInt(cfg.maxInputAgeSec, 30, 1, 3600);
         cfg.maxGridImportW = this.clampInt(cfg.maxGridImportW, -1, -1, 100000);
         cfg.pvOnlyFlowBufferW = this.clampNumber(cfg.pvOnlyFlowBufferW, 1000, 0, 100000);
@@ -698,6 +706,7 @@ class GoEGeminiAdapter extends utils.Adapter {
         const startThresholdW = 250;
         const stopThresholdW = 80;
         const maxSampleGapSec = 120;
+        const stopGraceMs = this.config.sessionStopGraceSec * 1000;
 
         if (session.active) {
             if (session.lastSampleTsMs > 0) {
@@ -707,19 +716,26 @@ class GoEGeminiAdapter extends utils.Adapter {
                     session.energyWh += (avgPowerW * dtSec) / 3600;
                 }
             }
+            session.lastSampleTsMs = nowMs;
+            session.lastPowerW = currentPowerW;
 
             if (currentPowerW <= stopThresholdW) {
-                session.active = false;
-                session.lastSampleTsMs = 0;
+                if (!session.belowStopSinceMs) {
+                    session.belowStopSinceMs = nowMs;
+                } else if (nowMs - session.belowStopSinceMs >= stopGraceMs) {
+                    session.active = false;
+                    session.lastSampleTsMs = 0;
+                    session.belowStopSinceMs = 0;
+                }
             } else {
-                session.lastSampleTsMs = nowMs;
+                session.belowStopSinceMs = 0;
             }
-            session.lastPowerW = currentPowerW;
         } else if (currentPowerW >= startThresholdW) {
             session.active = true;
             session.energyWh = 0;
             session.lastSampleTsMs = nowMs;
             session.lastPowerW = currentPowerW;
+            session.belowStopSinceMs = 0;
         } else {
             session.lastSampleTsMs = 0;
             session.lastPowerW = currentPowerW;
@@ -821,6 +837,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
             targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
+            targetCurrentFinalA = this.applyCurrentRampDown(targetCurrentFinalA);
 
             if (control.mode === MODE.PV_EXPORT) {
                 activeFormula = 'PV_EXPORT: available = pvPowerW - (houseConsumptionW - chargerPowerW) - reservePowerW; requires battery-full and no grid/akku discharge over buffer';
@@ -1102,6 +1119,35 @@ class GoEGeminiAdapter extends utils.Adapter {
         }
 
         return this.runtime.phaseControl.stableMode;
+    }
+
+    applyCurrentRampDown(rawTargetA) {
+        const ramp = this.runtime.currentRamp;
+        const now = Date.now();
+        const holdMs = this.config.currentRampDownHoldSec * 1000;
+
+        if (ramp.appliedA === null) {
+            ramp.appliedA = rawTargetA;
+            return ramp.appliedA;
+        }
+
+        if (rawTargetA >= ramp.appliedA) {
+            ramp.appliedA = rawTargetA;
+            ramp.candidateA = null;
+            ramp.candidateSinceMs = 0;
+            return ramp.appliedA;
+        }
+
+        if (ramp.candidateA !== rawTargetA) {
+            ramp.candidateA = rawTargetA;
+            ramp.candidateSinceMs = now;
+        } else if (now - ramp.candidateSinceMs >= holdMs) {
+            ramp.appliedA = rawTargetA;
+            ramp.candidateA = null;
+            ramp.candidateSinceMs = 0;
+        }
+
+        return ramp.appliedA;
     }
 
     applyAllowDelays(rawAllow) {
