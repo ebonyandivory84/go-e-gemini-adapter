@@ -146,7 +146,9 @@ Hinweis:
 - `phaseSwitchHysteresisW`
 - `phaseSwitchMinHoldSec`
 - `startDelaySec`, `stopDelaySec`
-- `currentRampDownHoldSec` (nur PV-Modi: Reduktion des Ladestroms wird entprellt, Erhoehungen sofort)
+- `currentRampDownHoldSec` (nur PV-Modi: Reduktion des Ladestroms wird entprellt, Erhoehungen sofort; gesenkt wird erst, wenn das Ziel die ganze Haltezeit unter dem aktuellen Strom lag - und dann auf den hoechsten Zielwert dieser Zeit)
+- PV-Modi regeln in 1-A-Schritten zwischen `minCurrentA` und `maxCurrentA`; die Knopf-Stufen der Wallbox (`al1`..`al5`, z. B. 6/10/12/14/16 A) gelten nur im Netz-/Manuell-Modus
+- Der Ladestrom wird ausschliesslich fluechtig ueber `amx` (Arbeitsspeicher) geschrieben, nie ueber `amp` (dauerhaft im Flash der Wallbox). Unterstuetzt die Firmware kein `amx`, wird kein Strom geschrieben (Warnung im Log).
 - `sessionStopGraceSec` (Gnadenfrist vor Session-Ende, verhindert Session-Reset durch kurze PV-Ladepausen)
 - `maxInputAgeSec`
 - `maxGridImportW` (`-1` deaktiviert)

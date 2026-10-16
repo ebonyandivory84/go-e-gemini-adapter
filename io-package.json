@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "go-e-gemini-adapter",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "news": {
+      "0.1.2": {
+        "en": "PV modes regulate in 1 A steps (6..max) instead of the button presets; lowering the current waits currentRampDownHoldSec and then goes to the highest target of that time; the current is only ever written volatile (amx), never amp (flash)",
+        "de": "PV-Modi regeln in 1-A-Schritten (6..max) statt nur in den Knopf-Stufen; Herunterregeln wartet currentRampDownHoldSec und geht dann auf den höchsten Zielwert dieser Zeit; Ladestrom wird nur noch flüchtig (amx) geschrieben, nie amp (Flash)"
+      },
       "0.1.1": {
         "en": "Session energy no longer resets on brief PV-triggered charging pauses (sessionStopGraceSec); charging current now ramps down smoothly instead of jumping, increases still apply immediately (currentRampDownHoldSec)",
         "de": "Session-Energiezählung wird bei kurzen PV-bedingten Ladepausen nicht mehr genullt (sessionStopGraceSec); Ladestrom wird beim Herunterregeln jetzt entprellt statt hart zu springen, Erhöhungen bleiben sofort wirksam (currentRampDownHoldSec)"

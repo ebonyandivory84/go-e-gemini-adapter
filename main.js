@@ -836,7 +836,10 @@ class GoEGeminiAdapter extends utils.Adapter {
             targetPhaseMode = this.calculateDynamicPhaseMode(availablePowerW);
             const phases = targetPhaseMode === 2 ? 3 : 1;
             targetCurrentRawA = Math.floor(availablePowerW / (230 * phases));
-            targetCurrentFinalA = this.normalizeCurrentToStep(targetCurrentRawA, minCurrentA, maxCurrentA, 'down') ?? 0;
+            // PV surplus: every whole ampere between min and max (the charger takes any 6..32 A via amx/amp without
+            // interrupting the session) - the button presets al1..al5 (e.g. 6,10,12,14,16) only apply to grid/manual.
+            // Interrupting changes (start/stop, phase switch) keep their own delays and hysteresis.
+            targetCurrentFinalA = this.fineCurrentDown(targetCurrentRawA, minCurrentA, maxCurrentA);
             targetCurrentFinalA = this.applyCurrentRampDown(targetCurrentFinalA);
 
             if (control.mode === MODE.PV_EXPORT) {
@@ -862,7 +865,7 @@ class GoEGeminiAdapter extends utils.Adapter {
                 targetCurrentFinalA = minCurrentA;
             }
             rawAllow = rawAllow && true;
-            currentKey = 'amp';
+            currentKey = 'amx';
         } else {
             if (targetCurrentRawA < minCurrentA || availablePowerW <= 0) {
                 rawAllow = false;
@@ -879,7 +882,7 @@ class GoEGeminiAdapter extends utils.Adapter {
             if (freshness.stale) {
                 rawAllow = false;
             }
-            currentKey = this.supportsAmx() ? 'amx' : 'amp';
+            currentKey = 'amx';
         }
 
         if (control.emergencyStop) {
@@ -1121,28 +1124,41 @@ class GoEGeminiAdapter extends utils.Adapter {
         return this.runtime.phaseControl.stableMode;
     }
 
+    /** largest whole ampere <= target within min..max; 0 when even min is too much */
+    fineCurrentDown(targetA, minA, maxA) {
+        const target = Math.floor(Number(targetA));
+        if (!Number.isFinite(target) || target < minA) {
+            return 0;
+        }
+        return Math.min(target, maxA);
+    }
+
+    /**
+     * Lowering the current is debounced (currentRampDownHoldSec): only when every target during the whole hold time
+     * was below the applied current, it goes down - to the highest of those targets, so a target that wobbles by an
+     * ampere (8, 7, 8 ...) neither restarts the hold nor lowers more than needed. Raising applies at once.
+     * candidateA = highest lower target since candidateSinceMs.
+     */
     applyCurrentRampDown(rawTargetA) {
         const ramp = this.runtime.currentRamp;
         const now = Date.now();
         const holdMs = this.config.currentRampDownHoldSec * 1000;
 
-        if (ramp.appliedA === null) {
-            ramp.appliedA = rawTargetA;
-            return ramp.appliedA;
-        }
-
-        if (rawTargetA >= ramp.appliedA) {
+        if (ramp.appliedA === null || rawTargetA >= ramp.appliedA || holdMs <= 0) {
             ramp.appliedA = rawTargetA;
             ramp.candidateA = null;
             ramp.candidateSinceMs = 0;
             return ramp.appliedA;
         }
 
-        if (ramp.candidateA !== rawTargetA) {
+        if (ramp.candidateA === null) {
             ramp.candidateA = rawTargetA;
             ramp.candidateSinceMs = now;
-        } else if (now - ramp.candidateSinceMs >= holdMs) {
-            ramp.appliedA = rawTargetA;
+        } else {
+            ramp.candidateA = Math.max(ramp.candidateA, rawTargetA);
+        }
+        if (now - ramp.candidateSinceMs >= holdMs) {
+            ramp.appliedA = ramp.candidateA;
             ramp.candidateA = null;
             ramp.candidateSinceMs = 0;
         }
@@ -1226,6 +1242,15 @@ class GoEGeminiAdapter extends utils.Adapter {
     }
 
     async sendCurrentIfNeeded(currentA, currentKey, simulationMode) {
+        // the current is only ever written volatile (amx, RAM) - never amp, which the charger stores in its flash
+        if (currentKey !== 'amx' || !this.supportsAmx()) {
+            const now = Date.now();
+            if (now - (this.runtime.command.lastAmxUnsupportedLogAtMs || 0) >= 600000) {
+                this.runtime.command.lastAmxUnsupportedLogAtMs = now;
+                this.log.warn(`Skip current write: only volatile amx is used (never amp); firmware ${this.runtime.charger.firmware || '?'} does not support amx`);
+            }
+            return;
+        }
         if (this.runtime.command.lastCurrentA === currentA && this.runtime.command.lastCurrentKey === currentKey) {
             return;
         }
