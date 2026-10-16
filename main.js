@@ -1124,11 +1124,14 @@ class GoEGeminiAdapter extends utils.Adapter {
         return this.runtime.phaseControl.stableMode;
     }
 
-    /** largest whole ampere <= target within min..max; 0 when even min is too much */
+    /**
+     * largest whole ampere <= target within min..max. Below min it stays at min: whether charging stops is decided by
+     * rawAllow / stopDelaySec - a current of 0 would pause the car at once, past the stop delay
+     */
     fineCurrentDown(targetA, minA, maxA) {
         const target = Math.floor(Number(targetA));
         if (!Number.isFinite(target) || target < minA) {
-            return 0;
+            return minA;
         }
         return Math.min(target, maxA);
     }
